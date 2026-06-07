@@ -136,6 +136,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         refreshAgents()
     }
 
+    override fun onResume() {
+        super.onResume()
+        refreshAgents()
+    }
+
     override fun onInit(statusCode: Int) {
         if (statusCode != TextToSpeech.SUCCESS) return
         tts.language = Locale.US
