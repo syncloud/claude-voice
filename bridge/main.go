@@ -48,7 +48,7 @@ var (
 
 type agent struct {
 	dir     string
-	started bool
+	session string
 }
 
 var (
@@ -428,24 +428,32 @@ func agentsHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, agentList())
 	case http.MethodPost:
 		var p struct {
-			Dir string `json:"dir"`
+			Dir     string `json:"dir"`
+			Session string `json:"session"`
 		}
 		json.NewDecoder(r.Body).Decode(&p)
 		if strings.TrimSpace(p.Dir) == "" {
 			writeText(w, 400, "missing dir")
 			return
 		}
-		addAgent(p.Dir)
+		aid := addAgent(p.Dir)
+		if p.Session != "" {
+			mu.Lock()
+			if agents[aid] != nil {
+				agents[aid].session = p.Session
+			}
+			mu.Unlock()
+		}
 		writeJSON(w, 200, agentList())
 	default:
 		writeText(w, 405, "method not allowed")
 	}
 }
 
-func runClaude(dir string, cont bool, text string) (string, error) {
-	args := []string{"-p"}
-	if cont {
-		args = append(args, "--continue")
+func runClaudeSession(dir, resume, text string) (string, string, error) {
+	args := []string{"-p", "--output-format", "json"}
+	if resume != "" {
+		args = append(args, "--resume", resume)
 	}
 	args = append(args, "--permission-mode", perm, text)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
@@ -453,37 +461,42 @@ func runClaude(dir string, cont bool, text string) (string, error) {
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
-	return strings.TrimSpace(string(out)), err
+	if err != nil {
+		return "", "", err
+	}
+	var res map[string]interface{}
+	if json.Unmarshal(out, &res) != nil {
+		return strings.TrimSpace(string(out)), "", nil
+	}
+	t, _ := res["result"].(string)
+	s, _ := res["session_id"].(string)
+	return strings.TrimSpace(t), s, nil
 }
 
 func compactAgent(id int) (string, bool) {
 	mu.Lock()
 	a := agents[id]
-	var dir string
+	var dir, sess string
 	if a != nil {
-		dir = a.dir
+		dir, sess = a.dir, a.session
 	}
 	mu.Unlock()
 	if a == nil {
 		return "", false
 	}
-	summary, err := runClaude(dir, true,
+	summary, _, err := runClaudeSession(dir, sess,
 		"Summarize our conversation so far as concisely as possible — key decisions, "+
 			"important context, and the current state — so a fresh session can continue "+
 			"seamlessly. Output only the summary, no preamble.")
 	if err != nil || summary == "" {
 		return "", false
 	}
+	_, newSess, _ := runClaudeSession(dir, "",
+		"Context from our earlier conversation (summarized):\n\n"+summary+
+			"\n\nAcknowledge with just: ready.")
 	mu.Lock()
 	if agents[id] != nil {
-		agents[id].started = false
-	}
-	mu.Unlock()
-	runClaude(dir, false, "Context from our earlier conversation (summarized):\n\n"+summary+
-		"\n\nAcknowledge with just: ready.")
-	mu.Lock()
-	if agents[id] != nil {
-		agents[id].started = true
+		agents[id].session = newSess
 	}
 	mu.Unlock()
 	return summary, true
@@ -513,7 +526,7 @@ func agentDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		mu.Lock()
 		if a := agents[id]; a != nil {
-			a.started = false
+			a.session = ""
 		}
 		mu.Unlock()
 		writeText(w, 200, "ok")
@@ -541,6 +554,184 @@ func sttHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	body, _ := io.ReadAll(r.Body)
 	writeText(w, 200, transcribe(body))
+}
+
+func encodeDir(d string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '-'
+	}, d)
+}
+
+type sessionInfo struct {
+	ID      string `json:"id"`
+	Preview string `json:"preview"`
+	Mtime   int64  `json:"mtime"`
+}
+
+func sessionPreview(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	for sc.Scan() {
+		var m map[string]interface{}
+		if json.Unmarshal(sc.Bytes(), &m) != nil || m["type"] != "user" {
+			continue
+		}
+		msg, _ := m["message"].(map[string]interface{})
+		switch c := msg["content"].(type) {
+		case string:
+			if strings.TrimSpace(c) != "" {
+				return trunc(c, 70)
+			}
+		case []interface{}:
+			for _, b := range c {
+				bm, _ := b.(map[string]interface{})
+				if bm["type"] == "text" {
+					if t, ok := bm["text"].(string); ok && strings.TrimSpace(t) != "" {
+						return trunc(t, 70)
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func listSessions(dir string) []sessionInfo {
+	proj := filepath.Join(home(), ".claude", "projects", encodeDir(dir))
+	entries, err := os.ReadDir(proj)
+	if err != nil {
+		return []sessionInfo{}
+	}
+	out := []sessionInfo{}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, sessionInfo{
+			ID:      strings.TrimSuffix(e.Name(), ".jsonl"),
+			Preview: sessionPreview(filepath.Join(proj, e.Name())),
+			Mtime:   info.ModTime().Unix(),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Mtime > out[j].Mtime })
+	if len(out) > 20 {
+		out = out[:20]
+	}
+	return out
+}
+
+func sessionsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeText(w, 405, "method not allowed")
+		return
+	}
+	dir := strings.TrimSpace(r.URL.Query().Get("dir"))
+	if dir == "" {
+		dir = home()
+	}
+	dir = expand(dir)
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	writeJSON(w, 200, listSessions(dir))
+}
+
+func historyEvents(dir, id string) [][]byte {
+	path := filepath.Join(home(), ".claude", "projects", encodeDir(dir), id+".jsonl")
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	out := [][]byte{}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	for sc.Scan() {
+		var ev map[string]interface{}
+		if json.Unmarshal(sc.Bytes(), &ev) != nil {
+			continue
+		}
+		switch ev["type"] {
+		case "user":
+			msg, _ := ev["message"].(map[string]interface{})
+			switch c := msg["content"].(type) {
+			case string:
+				if strings.TrimSpace(c) != "" {
+					out = append(out, mustJSON(map[string]string{"t": "you", "text": c}))
+				}
+			case []interface{}:
+				for _, b := range c {
+					bm, _ := b.(map[string]interface{})
+					if bm["type"] == "text" {
+						if t, ok := bm["text"].(string); ok && strings.TrimSpace(t) != "" {
+							out = append(out, mustJSON(map[string]string{"t": "you", "text": t}))
+						}
+					}
+				}
+			}
+		case "assistant":
+			msg, _ := ev["message"].(map[string]interface{})
+			content, _ := msg["content"].([]interface{})
+			for _, b := range content {
+				bm, _ := b.(map[string]interface{})
+				switch bm["type"] {
+				case "text":
+					if t, ok := bm["text"].(string); ok && strings.TrimSpace(t) != "" {
+						out = append(out, mustJSON(map[string]string{"t": "reply", "text": t}))
+					}
+				case "tool_use":
+					name, _ := bm["name"].(string)
+					in, _ := bm["input"].(map[string]interface{})
+					out = append(out, mustJSON(map[string]string{"t": "action", "label": toolLabel(name, in)}))
+					if patch, file, ok := diffPatch(name, in); ok {
+						out = append(out, mustJSON(map[string]string{"t": "diff", "file": file, "patch": patch}))
+					}
+				}
+			}
+		}
+	}
+	if len(out) > 200 {
+		out = out[len(out)-200:]
+	}
+	return out
+}
+
+func historyHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeText(w, 405, "method not allowed")
+		return
+	}
+	dir := expand(strings.TrimSpace(r.URL.Query().Get("dir")))
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		writeText(w, 400, "missing id")
+		return
+	}
+	evs := historyEvents(dir, id)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Write([]byte("["))
+	for i, e := range evs {
+		if i > 0 {
+			w.Write([]byte(","))
+		}
+		w.Write(e)
+	}
+	w.Write([]byte("]"))
 }
 
 func lsHandler(w http.ResponseWriter, r *http.Request) {
@@ -593,10 +784,9 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	mu.Lock()
 	a := agents[id]
-	var dir string
-	var started bool
+	var dir, resume string
 	if a != nil {
-		dir, started = a.dir, a.started
+		dir, resume = a.dir, a.session
 	}
 	mu.Unlock()
 
@@ -615,8 +805,8 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	args := []string{"-p", "--output-format", "stream-json", "--verbose"}
-	if started {
-		args = append(args, "--continue")
+	if resume != "" {
+		args = append(args, "--resume", resume)
 	}
 	args = append(args, "--permission-mode", perm, p.Text)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
@@ -631,8 +821,18 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	sawReply := false
+	newSession := ""
 	for sc.Scan() {
-		for _, e := range transform(sc.Bytes()) {
+		line := sc.Bytes()
+		if strings.Contains(string(line), "session_id") {
+			var m map[string]interface{}
+			if json.Unmarshal(line, &m) == nil {
+				if s, ok := m["session_id"].(string); ok && s != "" {
+					newSession = s
+				}
+			}
+		}
+		for _, e := range transform(line) {
 			if strings.Contains(string(e), `"t":"reply"`) {
 				sawReply = true
 			}
@@ -646,8 +846,8 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 		emit(mustJSON(map[string]string{"t": "reply", "text": "No response."}))
 	}
 	mu.Lock()
-	if agents[id] != nil {
-		agents[id].started = true
+	if agents[id] != nil && newSession != "" {
+		agents[id].session = newSession
 	}
 	mu.Unlock()
 }
@@ -664,6 +864,8 @@ func main() {
 	mux.HandleFunc("/agents", agentsHandler)
 	mux.HandleFunc("/agents/", agentDeleteHandler)
 	mux.HandleFunc("/ls", lsHandler)
+	mux.HandleFunc("/sessions", sessionsHandler)
+	mux.HandleFunc("/history", historyHandler)
 	mux.HandleFunc("/stt", sttHandler)
 	mux.HandleFunc("/chat", chatHandler)
 	mux.HandleFunc("/tts", ttsHandler)

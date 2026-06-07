@@ -118,6 +118,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private val agents = mutableListOf<Agent>()
     private var currentAgentId: Int? = null
     private val transcripts = mutableMapOf<Int, SpannableStringBuilder>()
+    private var loadingHistory = false
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -428,22 +429,75 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                if (browseDir.isNotEmpty()) { addAgentDir(browseDir); dialog.dismiss() }
+                if (browseDir.isNotEmpty()) { dialog.dismiss(); openSessionPicker(browseDir) }
             }
         }
         load("")
         dialog.show()
     }
 
-    private fun addAgentDir(dir: String) {
+    private fun openSessionPicker(dir: String) {
         ui.launch {
-            val s = post("${base()}/agents", JSONObject().put("dir", dir).toString().toRequestBody(jsonType))
+            val s = httpGet("${base()}/sessions?dir=" + Uri.encode(dir))
+            val ids = ArrayList<String>()
+            val labels = ArrayList<String>()
+            labels.add("✨  New session")
+            if (s != null) {
+                try {
+                    val arr = JSONArray(s)
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        ids.add(o.getString("id"))
+                        val prev = o.optString("preview").ifBlank { o.getString("id").take(8) }
+                        labels.add("⟳  $prev")
+                    }
+                } catch (e: Exception) { /* ignore */ }
+            }
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle(shortPath(dir))
+                .setItems(labels.toTypedArray()) { _, which ->
+                    if (which == 0) addAgentDir(dir, null) else addAgentDir(dir, ids[which - 1])
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    private fun addAgentDir(dir: String, session: String?) {
+        ui.launch {
+            val payload = JSONObject().put("dir", dir)
+            if (session != null) payload.put("session", session)
+            val s = post("${base()}/agents", payload.toString().toRequestBody(jsonType))
             if (s == null) { setStatus("add agent failed"); return@launch }
             setAgents(parseAgents(s))
-            currentAgentId = agents.maxByOrNull { it.id }?.id
+            agentsSig = ""
+            val id = agents.firstOrNull { it.dir == dir }?.id ?: agents.maxByOrNull { it.id }?.id
+            currentAgentId = id
+            if (session != null && id != null) {
+                val buf = SpannableStringBuilder()
+                transcripts[id] = buf
+                val h = httpGet("${base()}/history?dir=" + Uri.encode(dir) + "&id=" + Uri.encode(session))
+                if (h != null) {
+                    try {
+                        val arr = JSONArray(h)
+                        loadingHistory = true
+                        for (i in 0 until arr.length()) renderEvent(arr.getJSONObject(i))
+                        loadingHistory = false
+                    } catch (e: Exception) { loadingHistory = false }
+                }
+            }
             updateBottom()
             showTranscript()
             drawer.closeDrawers()
+        }
+    }
+
+    private fun renderEvent(o: JSONObject) {
+        when (o.optString("t")) {
+            "you" -> appendYou(o.optString("text"))
+            "action" -> appendAction(o.optString("label"))
+            "diff" -> appendDiff(o.optString("file"), o.optString("patch"))
+            "reply" -> appendReply(o.optString("text"))
         }
     }
 
@@ -757,6 +811,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun appendSpan(cs: CharSequence) {
         buffer().append(cs)
+        if (loadingHistory) return
         transcript.setText(buffer(), TextView.BufferType.SPANNABLE)
         scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
     }
