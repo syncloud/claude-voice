@@ -9,4 +9,5 @@
     <string name="hold_to_talk">Hold the mic to talk</string>
     <string name="open_agents">Open agents</string>
     <string name="voice">Voice</string>
+    <string name="stop">Stop</string>
 </resources>

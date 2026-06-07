@@ -2,6 +2,7 @@
 <resources>
     <color name="mic_idle">#3F51B5</color>
     <color name="mic_recording">#E53935</color>
+    <color name="stop_btn">#616161</color>
     <color name="bottom_bar">#1E1E1E</color>
     <color name="status_text">#E0E0E0</color>
     <color name="workdir_text">#9E9E9E</color>
