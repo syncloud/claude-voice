@@ -7,4 +7,6 @@
     <color name="bottom_bar">#1E1E1E</color>
     <color name="status_text">#E0E0E0</color>
     <color name="workdir_text">#9E9E9E</color>
+    <color name="branch_text">#4DB6AC</color>
+    <color name="branch_dirty">#FFB74D</color>
 </resources>

@@ -64,6 +64,15 @@
                     android:text="@string/no_agent"
                     android:textColor="@color/workdir_text"
                     android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/branch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:singleLine="true"
+                    android:textColor="@color/branch_text"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
             </LinearLayout>
 
             <com.google.android.material.floatingactionbutton.FloatingActionButton

@@ -14,6 +14,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -72,6 +73,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var scroll: ScrollView
     private lateinit var status: TextView
     private lateinit var workdir: TextView
+    private lateinit var branch: TextView
     private lateinit var bridgeUrl: EditText
     private lateinit var agentList: ListView
     private lateinit var voiceSpinner: Spinner
@@ -95,6 +97,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         scroll = findViewById(R.id.scroll)
         status = findViewById(R.id.status)
         workdir = findViewById(R.id.workdir)
+        branch = findViewById(R.id.branch)
         bridgeUrl = findViewById(R.id.bridgeUrl)
         agentList = findViewById(R.id.agentList)
         voiceSpinner = findViewById(R.id.voiceSpinner)
@@ -221,8 +224,26 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun setAgents(list: List<Agent>) {
         agents.clear()
         agents.addAll(list)
-        val rows = agents.map { a -> a.name + (a.branch?.let { "  (${it})" } ?: "") }
-        agentList.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, rows)
+        agentList.adapter = AgentAdapter(agents.toList())
+    }
+
+    private inner class AgentAdapter(private val items: List<Agent>) :
+        ArrayAdapter<Agent>(this, R.layout.item_agent, items) {
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val v = convertView ?: layoutInflater.inflate(R.layout.item_agent, parent, false)
+            val a = items[position]
+            v.findViewById<TextView>(R.id.agentName).text = a.name
+            val b = v.findViewById<TextView>(R.id.agentBranch)
+            if (a.branch != null) {
+                b.visibility = View.VISIBLE
+                b.text = a.branch + if (a.dirty) "  ✗" else ""
+                b.setTextColor(ContextCompat.getColor(this@MainActivity,
+                    if (a.dirty) R.color.branch_dirty else R.color.branch_text))
+            } else {
+                b.visibility = View.GONE
+            }
+            return v
+        }
     }
 
     private fun openDirPicker() {
@@ -288,9 +309,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun updateBottom() {
         val a = agents.firstOrNull { it.id == currentAgentId }
-        if (a == null) { workdir.text = getString(R.string.no_agent); return }
-        val b = a.branch?.let { " • $it${if (a.dirty) " ✗" else ""}" } ?: ""
-        workdir.text = shortPath(a.dir) + b
+        if (a == null) {
+            workdir.text = getString(R.string.no_agent)
+            branch.visibility = View.GONE
+            return
+        }
+        workdir.text = shortPath(a.dir)
+        if (a.branch != null) {
+            branch.visibility = View.VISIBLE
+            branch.text = a.branch + if (a.dirty) "  ✗" else ""
+            branch.setTextColor(ContextCompat.getColor(this,
+                if (a.dirty) R.color.branch_dirty else R.color.branch_text))
+        } else {
+            branch.visibility = View.GONE
+        }
     }
 
     private fun shortPath(dir: String): String {
