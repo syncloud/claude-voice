@@ -7,18 +7,22 @@ import android.content.res.ColorStateList
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import android.view.MotionEvent
+import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -65,7 +69,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var status: TextView
     private lateinit var workdir: TextView
     private lateinit var bridgeUrl: EditText
-    private lateinit var newDir: EditText
     private lateinit var agentList: ListView
     private lateinit var voiceSpinner: Spinner
     private lateinit var talk: FloatingActionButton
@@ -87,7 +90,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         status = findViewById(R.id.status)
         workdir = findViewById(R.id.workdir)
         bridgeUrl = findViewById(R.id.bridgeUrl)
-        newDir = findViewById(R.id.newDir)
         agentList = findViewById(R.id.agentList)
         voiceSpinner = findViewById(R.id.voiceSpinner)
         talk = findViewById(R.id.talk)
@@ -119,19 +121,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             drawer.closeDrawers()
         }
 
-        findViewById<Button>(R.id.addAgent).setOnClickListener {
-            val d = newDir.text.toString().trim()
-            if (d.isEmpty()) return@setOnClickListener
-            ui.launch {
-                val s = post("${base()}/agents", JSONObject().put("dir", d).toString().toRequestBody(jsonType))
-                if (s == null) { setStatus("add agent failed"); return@launch }
-                setAgents(parseAgents(s))
-                currentAgentId = agents.maxByOrNull { it.id }?.id
-                updateBottom()
-                newDir.setText("")
-                drawer.closeDrawers()
-            }
-        }
+        findViewById<Button>(R.id.addAgent).setOnClickListener { openDirPicker() }
 
         refreshAgents()
     }
@@ -204,6 +194,67 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         agents.addAll(list)
         val rows = agents.map { a -> a.name + (a.branch?.let { "  (${it})" } ?: "") }
         agentList.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, rows)
+    }
+
+    private fun openDirPicker() {
+        val d = resources.displayMetrics.density
+        fun px(v: Int) = (v * d).toInt()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(px(16), px(8), px(16), 0)
+        }
+        val pathView = TextView(this).apply { setPadding(0, 0, 0, px(8)); textSize = 12f }
+        val list = ListView(this)
+        container.addView(pathView)
+        container.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, px(360)))
+
+        var browseDir = ""
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Add agent — pick a folder")
+            .setView(container)
+            .setPositiveButton("Use this folder", null)
+            .setNegativeButton("Cancel", null)
+            .create()
+
+        fun load(dir: String) {
+            ui.launch {
+                val s = httpGet("${base()}/ls?dir=" + Uri.encode(dir)) ?: run { setStatus("cannot list folder"); return@launch }
+                val o = JSONObject(s)
+                browseDir = o.getString("dir")
+                pathView.text = browseDir
+                val parent = if (o.isNull("parent")) null else o.getString("parent")
+                val arr = o.getJSONArray("dirs")
+                val rows = ArrayList<String>()
+                val targets = ArrayList<String>()
+                if (parent != null) { rows.add("⬆  .."); targets.add(parent) }
+                for (i in 0 until arr.length()) {
+                    val n = arr.getString(i)
+                    rows.add("📁  $n")
+                    targets.add(browseDir.trimEnd('/') + "/" + n)
+                }
+                list.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, rows)
+                list.setOnItemClickListener { _, _, pos, _ -> load(targets[pos]) }
+            }
+        }
+
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                if (browseDir.isNotEmpty()) { addAgentDir(browseDir); dialog.dismiss() }
+            }
+        }
+        load("")
+        dialog.show()
+    }
+
+    private fun addAgentDir(dir: String) {
+        ui.launch {
+            val s = post("${base()}/agents", JSONObject().put("dir", dir).toString().toRequestBody(jsonType))
+            if (s == null) { setStatus("add agent failed"); return@launch }
+            setAgents(parseAgents(s))
+            currentAgentId = agents.maxByOrNull { it.id }?.id
+            updateBottom()
+            drawer.closeDrawers()
+        }
     }
 
     private fun updateBottom() {

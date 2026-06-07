@@ -75,6 +75,13 @@ func expand(p string) string {
 	return p
 }
 
+func home() string {
+	if h, err := os.UserHomeDir(); err == nil {
+		return h
+	}
+	return "/"
+}
+
 func addAgent(dir string) int {
 	dir = expand(strings.TrimSpace(dir))
 	if abs, err := filepath.Abs(dir); err == nil {
@@ -263,6 +270,38 @@ func sttHandler(w http.ResponseWriter, r *http.Request) {
 	writeText(w, 200, transcribe(body))
 }
 
+func lsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeText(w, 405, "method not allowed")
+		return
+	}
+	dir := strings.TrimSpace(r.URL.Query().Get("dir"))
+	if dir == "" {
+		dir = home()
+	}
+	dir = expand(dir)
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		writeText(w, 400, "cannot read dir")
+		return
+	}
+	dirs := []string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, e.Name())
+		}
+	}
+	sort.Strings(dirs)
+	var parent *string
+	if p := filepath.Dir(dir); p != dir {
+		parent = &p
+	}
+	writeJSON(w, 200, map[string]interface{}{"dir": dir, "parent": parent, "dirs": dirs})
+}
+
 func chatHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeText(w, 405, "method not allowed")
@@ -285,9 +324,7 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	start := env("VOICE_WORKDIR", "")
 	if start == "" {
-		if wd, err := os.Getwd(); err == nil {
-			start = wd
-		}
+		start = home()
 	}
 	addAgent(start)
 
@@ -295,6 +332,7 @@ func main() {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { writeText(w, 200, "ok") })
 	mux.HandleFunc("/agents", agentsHandler)
 	mux.HandleFunc("/agents/", agentDeleteHandler)
+	mux.HandleFunc("/ls", lsHandler)
 	mux.HandleFunc("/stt", sttHandler)
 	mux.HandleFunc("/chat", chatHandler)
 
