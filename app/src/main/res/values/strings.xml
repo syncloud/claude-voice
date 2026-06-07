@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Claude Voice</string>
-    <string name="talk">Hold to talk</string>
-    <string name="stop">Stop &amp; send</string>
     <string name="bridge_hint">Bridge URL</string>
+    <string name="agents">Agents</string>
+    <string name="add_agent">Add agent</string>
+    <string name="new_agent_hint">agent dir e.g. ~/storage/projects/foo</string>
+    <string name="no_agent">no agent</string>
+    <string name="hold_to_talk">Hold the mic to talk</string>
+    <string name="open_agents">Open agents</string>
+    <string name="voice">Voice</string>
 </resources>

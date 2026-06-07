@@ -3,19 +3,27 @@ package org.cyberb.claudevoice
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
 import android.view.MotionEvent
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ListView
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.drawerlayout.widget.DrawerLayout
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,19 +34,23 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
+data class Agent(val id: Int, val name: String, val dir: String, val branch: String?)
+
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private val sampleRate = 16000
+    private val jsonType = "application/json".toMediaType()
     private val ui = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val http = OkHttpClient.Builder()
-        .callTimeout(180, TimeUnit.SECONDS)
-        .readTimeout(180, TimeUnit.SECONDS)
+        .callTimeout(200, TimeUnit.SECONDS)
+        .readTimeout(200, TimeUnit.SECONDS)
         .build()
 
     private val recording = AtomicBoolean(false)
@@ -46,35 +58,137 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private val pcm = ByteArrayOutputStream()
 
     private lateinit var tts: TextToSpeech
+    private lateinit var drawer: DrawerLayout
     private lateinit var transcript: TextView
     private lateinit var scroll: ScrollView
     private lateinit var status: TextView
+    private lateinit var workdir: TextView
     private lateinit var bridgeUrl: EditText
+    private lateinit var newDir: EditText
+    private lateinit var agentList: ListView
+    private lateinit var voiceSpinner: Spinner
+    private lateinit var talk: FloatingActionButton
+    private val voices = mutableListOf<Voice>()
+
+    private val agents = mutableListOf<Agent>()
+    private var currentAgentId: Int? = null
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        drawer = findViewById(R.id.drawer)
         transcript = findViewById(R.id.transcript)
         scroll = findViewById(R.id.scroll)
         status = findViewById(R.id.status)
+        workdir = findViewById(R.id.workdir)
         bridgeUrl = findViewById(R.id.bridgeUrl)
-        val talk = findViewById<Button>(R.id.talk)
+        newDir = findViewById(R.id.newDir)
+        agentList = findViewById(R.id.agentList)
+        voiceSpinner = findViewById(R.id.voiceSpinner)
+        talk = findViewById(R.id.talk)
 
         tts = TextToSpeech(this, this)
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
 
-        talk.setOnTouchListener { v, event ->
+        talk.setOnTouchListener { _, event ->
             when (event.action) {
-                MotionEvent.ACTION_DOWN -> { v.isPressed = true; startRecording(); true }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { v.isPressed = false; stopAndSend(); true }
+                MotionEvent.ACTION_DOWN -> { micColor(R.color.mic_recording); startRecording(); true }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { micColor(R.color.mic_idle); stopAndSend(); true }
                 else -> false
             }
         }
+
+        agentList.setOnItemClickListener { _, _, pos, _ ->
+            currentAgentId = agents[pos].id
+            updateBottom()
+            drawer.closeDrawers()
+        }
+
+        findViewById<Button>(R.id.addAgent).setOnClickListener {
+            val d = newDir.text.toString().trim()
+            if (d.isEmpty()) return@setOnClickListener
+            ui.launch {
+                val s = post("${base()}/agents", JSONObject().put("dir", d).toString().toRequestBody(jsonType))
+                if (s == null) { setStatus("add agent failed"); return@launch }
+                setAgents(parseAgents(s))
+                currentAgentId = agents.maxByOrNull { it.id }?.id
+                updateBottom()
+                newDir.setText("")
+                drawer.closeDrawers()
+            }
+        }
+
+        refreshAgents()
     }
 
     override fun onInit(statusCode: Int) {
-        if (statusCode == TextToSpeech.SUCCESS) tts.language = Locale.US
+        if (statusCode != TextToSpeech.SUCCESS) return
+        tts.language = Locale.US
+        runOnUiThread { loadVoices() }
+    }
+
+    private fun loadVoices() {
+        val all = try { tts.voices?.toList() ?: emptyList() } catch (e: Exception) { emptyList() }
+        val list = all.filter { it.locale.language == "en" }
+            .sortedWith(compareByDescending<Voice> { it.quality }.thenBy { it.locale.toString() }.thenBy { it.name })
+        voices.clear(); voices.addAll(list)
+        val labels = voices.map { v ->
+            "${v.locale.displayName} ${stars(v.quality)}${if (v.isNetworkConnectionRequired) " (net)" else ""}"
+        }
+        voiceSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, labels)
+        voiceSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: android.view.View?, pos: Int, id: Long) {
+                voices.getOrNull(pos)?.let { tts.voice = it }
+            }
+            override fun onNothingSelected(p: AdapterView<*>?) {}
+        }
+    }
+
+    private fun stars(q: Int) = when {
+        q >= Voice.QUALITY_VERY_HIGH -> "★★★"
+        q >= Voice.QUALITY_HIGH -> "★★"
+        q >= Voice.QUALITY_NORMAL -> "★"
+        else -> "·"
+    }
+
+    private fun micColor(res: Int) {
+        talk.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, res))
+    }
+
+    private fun refreshAgents() = ui.launch {
+        val s = httpGet("${base()}/agents") ?: run { setStatus("no bridge at ${base()}"); return@launch }
+        setAgents(parseAgents(s))
+        if (currentAgentId == null || agents.none { it.id == currentAgentId }) {
+            currentAgentId = agents.firstOrNull()?.id
+        }
+        updateBottom()
+    }
+
+    private fun parseAgents(s: String): List<Agent> {
+        val out = mutableListOf<Agent>()
+        try {
+            val arr = JSONArray(s)
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                out.add(Agent(o.getInt("id"), o.optString("name"), o.optString("dir"),
+                    if (o.isNull("branch")) null else o.optString("branch")))
+            }
+        } catch (e: Exception) { /* ignore malformed */ }
+        return out
+    }
+
+    private fun setAgents(list: List<Agent>) {
+        agents.clear()
+        agents.addAll(list)
+        val rows = agents.map { a -> a.name + (a.branch?.let { "  (${it})" } ?: "") }
+        agentList.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, rows)
+    }
+
+    private fun updateBottom() {
+        val a = agents.firstOrNull { it.id == currentAgentId }
+        workdir.text = if (a == null) getString(R.string.no_agent)
+        else a.dir + (a.branch?.let { " • $it" } ?: "")
     }
 
     private fun hasMic() = ContextCompat.checkSelfPermission(
@@ -114,6 +228,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         recordThread?.join()
         val audio = synchronized(pcm) { pcm.toByteArray() }
         if (audio.isEmpty()) { setStatus("nothing recorded"); return }
+        val aid = currentAgentId
+        if (aid == null) { setStatus("no agent selected — swipe right to add one"); return }
         val body = wav(audio).toRequestBody("audio/wav".toMediaType())
         setStatus("transcribing…")
         ui.launch {
@@ -121,8 +237,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             if (said.isNullOrBlank()) { setStatus("speech-to-text failed"); return@launch }
             append("you", said)
             setStatus("thinking…")
-            val payload = JSONObject().put("text", said).toString()
-                .toRequestBody("application/json".toMediaType())
+            val payload = JSONObject().put("text", said).put("agent", aid).toString().toRequestBody(jsonType)
             val reply = post("${base()}/chat", payload)
             if (reply.isNullOrBlank()) { setStatus("agent failed"); return@launch }
             append("agent", reply)
@@ -133,14 +248,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun base() = bridgeUrl.text.toString().trim().trimEnd('/')
 
+    private suspend fun httpGet(url: String): String? = withContext(Dispatchers.IO) {
+        try {
+            http.newCall(Request.Builder().url(url).get().build()).execute().use { r ->
+                if (r.isSuccessful) r.body?.string()?.trim() else null
+            }
+        } catch (e: Exception) { null }
+    }
+
     private suspend fun post(url: String, body: RequestBody): String? = withContext(Dispatchers.IO) {
         try {
             http.newCall(Request.Builder().url(url).post(body).build()).execute().use { r ->
                 if (r.isSuccessful) r.body?.string()?.trim() else null
             }
-        } catch (e: Exception) {
-            null
-        }
+        } catch (e: Exception) { null }
     }
 
     private fun wav(data: ByteArray): ByteArray {

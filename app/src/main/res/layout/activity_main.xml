@@ -1,43 +1,148 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.drawerlayout.widget.DrawerLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/drawer"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="12dp">
+    android:layout_height="match_parent">
 
-    <EditText
-        android:id="@+id/bridgeUrl"
+    <!-- main content -->
+    <RelativeLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="@string/bridge_hint"
-        android:inputType="textUri"
-        android:text="http://127.0.0.1:8765" />
+        android:layout_height="match_parent">
 
-    <TextView
-        android:id="@+id/status"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingTop="4dp"
-        android:paddingBottom="4dp"
-        android:text="ready" />
+        <ScrollView
+            android:id="@+id/scroll"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_above="@+id/bottombar"
+            android:fillViewport="true"
+            android:padding="12dp">
 
-    <ScrollView
-        android:id="@+id/scroll"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1">
+            <TextView
+                android:id="@+id/transcript"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textIsSelectable="true"
+                android:lineSpacingMultiplier="1.1" />
+        </ScrollView>
 
-        <TextView
-            android:id="@+id/transcript"
+        <LinearLayout
+            android:id="@+id/bottombar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textIsSelectable="true" />
-    </ScrollView>
+            android:layout_alignParentBottom="true"
+            android:background="@color/bottom_bar"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp">
 
-    <Button
-        android:id="@+id/talk"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="@string/talk" />
-</LinearLayout>
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/status"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ready"
+                    android:textColor="@color/status_text"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/workdir"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="start"
+                    android:singleLine="true"
+                    android:text="@string/no_agent"
+                    android:textColor="@color/workdir_text"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <com.google.android.material.floatingactionbutton.FloatingActionButton
+                android:id="@+id/talk"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:contentDescription="@string/hold_to_talk"
+                android:src="@android:drawable/ic_btn_speak_now"
+                app:backgroundTint="@color/mic_idle"
+                app:fabCustomSize="84dp"
+                app:maxImageSize="40dp"
+                app:tint="@android:color/white" />
+        </LinearLayout>
+    </RelativeLayout>
+
+    <!-- left agent drawer (swipe from left edge) -->
+    <LinearLayout
+        android:layout_width="300dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="start"
+        android:background="?android:attr/colorBackground"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingBottom="8dp"
+            android:text="@string/agents"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <ListView
+            android:id="@+id/agentList"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <EditText
+            android:id="@+id/newDir"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/new_agent_hint"
+            android:inputType="textUri"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/addAgent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/add_agent" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="12dp"
+            android:background="#33888888" />
+
+        <EditText
+            android:id="@+id/bridgeUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/bridge_hint"
+            android:inputType="textUri"
+            android:text="http://127.0.0.1:8765"
+            android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/voice"
+            android:textStyle="bold" />
+
+        <Spinner
+            android:id="@+id/voiceSpinner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+</androidx.drawerlayout.widget.DrawerLayout>
