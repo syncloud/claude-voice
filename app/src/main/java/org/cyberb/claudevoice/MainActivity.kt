@@ -16,6 +16,7 @@ import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.text.Spannable
 import android.text.SpannableString
+import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
@@ -93,6 +94,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private val agents = mutableListOf<Agent>()
     private var currentAgentId: Int? = null
+    private val transcripts = mutableMapOf<Int, SpannableStringBuilder>()
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -129,6 +131,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         agentList.setOnItemClickListener { _, _, pos, _ ->
             currentAgentId = agents[pos].id
             updateBottom()
+            showTranscript()
             drawer.closeDrawers()
         }
 
@@ -309,6 +312,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             setAgents(parseAgents(s))
             currentAgentId = agents.maxByOrNull { it.id }?.id
             updateBottom()
+            showTranscript()
             drawer.closeDrawers()
         }
     }
@@ -563,8 +567,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return out.toByteArray()
     }
 
+    private fun buffer(): SpannableStringBuilder =
+        transcripts.getOrPut(currentAgentId ?: -1) { SpannableStringBuilder() }
+
     private fun appendSpan(cs: CharSequence) {
-        transcript.append(cs)
+        buffer().append(cs)
+        transcript.setText(buffer(), TextView.BufferType.SPANNABLE)
+        scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
+    }
+
+    private fun showTranscript() {
+        val buf = transcripts.getOrPut(currentAgentId ?: -1) { SpannableStringBuilder() }
+        transcript.setText(buf, TextView.BufferType.SPANNABLE)
         scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
     }
 
