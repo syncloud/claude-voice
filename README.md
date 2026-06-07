@@ -25,7 +25,8 @@ stops.
 
 - `app/` — the Android app (Kotlin, AGP 8.5.2, minSdk 23). Records 16 kHz mono
   PCM on hold-to-talk, POSTs to the bridge, shows the transcript, speaks the reply.
-- `bridge/` — the Termux-side localhost server (`server.py`): `/stt` via
+- `bridge/` — the Termux-side localhost server, a single static Go binary
+  (`claude-voice-bridge-arm64`): manages N agents (one per dir), `/stt` via
   whisper.cpp, `/chat` via the `claude` CLI. See `bridge/README.md`.
 - `.drone.jsonnet` — CI: builds the APK in `runmymind/docker-android-sdk`,
   publishes to GitHub releases on tag, ships the APK to the artifact server.
@@ -35,11 +36,10 @@ stops.
 - whisper.cpp built at `~/storage/projects/whisper.cpp` and a model at
   `~/whisper-models/ggml-base.en.bin`
 - `claude` CLI on `PATH`
-- `python3`
 
 ## Quick start
 
-1. Termux: `cd <your-repo> && python3 ~/storage/projects/claude-voice/bridge/server.py`
+1. Termux: `cd <your-repo> && ./claude-voice-bridge-arm64`
 2. Install the app APK (from CI artifacts or a local build).
 3. Open the app, confirm the bridge URL (`http://127.0.0.1:8765`), grant the mic
    permission, hold the button, speak, release.

@@ -9,3 +9,5 @@ build
 *.keystore
 __pycache__/
 *.pyc
+claude-voice-bridge-arm64
+bridge/claude-voice-bridge

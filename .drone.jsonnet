@@ -56,6 +56,58 @@ local build() = {
     ]
 };
 
+local bridge() = {
+    kind: "pipeline",
+    name: "bridge",
+
+    platform: {
+        os: "linux",
+        arch: "amd64"
+    },
+    steps: [
+        {
+            name: "build",
+            image: "golang:1.23-bookworm",
+            commands: [
+                "cd bridge",
+                "go vet ./...",
+                "CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags=\"-s -w\" -o ../claude-voice-bridge-arm64 ."
+            ]
+        },
+        {
+            name: "publish to github",
+            image: "plugins/github-release:1.0.0",
+            settings: {
+                api_key: { from_secret: "github_token" },
+                files: "claude-voice-bridge-arm64",
+                overwrite: true,
+                file_exists: "overwrite"
+            },
+            when: {
+                event: [ "tag" ]
+            }
+        },
+        {
+            name: "artifact",
+            image: "appleboy/drone-scp",
+            settings: {
+                host: { from_secret: "artifact_host" },
+                username: "artifact",
+                key: { from_secret: "artifact_key" },
+                timeout: "2m",
+                command_timeout: "2m",
+                target: "/home/artifact/repo/claude-voice/${DRONE_BUILD_NUMBER}",
+                source: "claude-voice-bridge-arm64",
+                strip_components: 0
+            },
+            when: {
+                status: [ "failure", "success" ]
+            }
+        }
+    ]
+};
+
 [
-    build()
+    build(),
+    bridge()
 ]
