@@ -422,7 +422,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             "diff" -> appendDiff(o.optString("file"), o.optString("patch"))
             "reply" -> {
                 val text = o.optString("text")
-                appendReply(forDisplay(text))
+                appendReply(text)
                 setStatus("speaking…")
                 val speech = forSpeech(text)
                 if (usePiper) speakPiper(speech) else tts.speak(speech, TextToSpeech.QUEUE_FLUSH, null, "reply")
@@ -474,9 +474,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         s = Regex("(\\*\\*|\\*|__|_|#+|>|~~|~)").replace(s, "")
         return s
     }
-
-    private fun forDisplay(t: String) =
-        stripMd(t).lines().joinToString("\n") { it.trimEnd() }.trim()
 
     private fun forSpeech(t: String): String {
         var s = speakTables(t)
@@ -584,8 +581,36 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         appendSpan("$text\n\n")
     }
 
+    private fun stripInline(t: String): String {
+        var s = t
+        s = Regex("`([^`]*)`").replace(s, "$1")
+        s = Regex("\\[([^\\]]+)\\]\\([^)]*\\)").replace(s, "$1")
+        s = Regex("^\\s{0,3}[-*+]\\s+", RegexOption.MULTILINE).replace(s, "• ")
+        s = Regex("(\\*\\*|\\*|__|_|#+|>|~~|~)").replace(s, "")
+        return s
+    }
+
     private fun appendReply(text: String) {
-        appendSpan("$text\n\n")
+        val parts = text.split("```")
+        for ((i, part) in parts.withIndex()) {
+            if (i % 2 == 0) {
+                val t = stripInline(part).trim()
+                if (t.isNotEmpty()) appendSpan("$t\n")
+            } else {
+                var code = part
+                val nl = code.indexOf('\n')
+                if (nl >= 0) {
+                    val first = code.substring(0, nl).trim()
+                    if (first.isNotEmpty() && !first.contains(' ') && first.length < 15) {
+                        code = code.substring(nl + 1)
+                    }
+                }
+                for (line in code.trimEnd('\n').split("\n")) {
+                    appendSpan(colored("$line\n", R.color.code_text, mono = true))
+                }
+            }
+        }
+        appendSpan("\n")
     }
 
     private fun appendAction(label: String) {
