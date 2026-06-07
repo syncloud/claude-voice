@@ -11,6 +11,7 @@ import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.view.MotionEvent
 import android.view.ViewGroup
@@ -75,12 +76,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var agentList: ListView
     private lateinit var voiceSpinner: Spinner
     private lateinit var talk: FloatingActionButton
-    private lateinit var stop: FloatingActionButton
     private val voices = mutableListOf<Voice>()
     private var chatJob: Job? = null
     @Volatile private var currentCall: okhttp3.Call? = null
     private var usePiper = false
     private var player: MediaPlayer? = null
+    private var busy = false
 
     private val agents = mutableListOf<Agent>()
     private var currentAgentId: Int? = null
@@ -98,25 +99,20 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         agentList = findViewById(R.id.agentList)
         voiceSpinner = findViewById(R.id.voiceSpinner)
         talk = findViewById(R.id.talk)
-        stop = findViewById(R.id.stop)
-
-        stop.setOnClickListener {
-            tts.stop()
-            stopPlayer()
-            currentCall?.cancel()
-            chatJob?.cancel()
-            recording.set(false)
-            micColor(R.color.mic_idle)
-            setStatus("stopped")
-        }
 
         tts = TextToSpeech(this, this)
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
 
         talk.setOnTouchListener { _, event ->
             when (event.action) {
-                MotionEvent.ACTION_DOWN -> { micColor(R.color.mic_recording); startRecording(); true }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { micColor(R.color.mic_idle); stopAndSend(); true }
+                MotionEvent.ACTION_DOWN -> {
+                    if (busy) interrupt() else startRecording()
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (recording.get()) stopAndSend()
+                    true
+                }
                 else -> false
             }
         }
@@ -141,6 +137,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     override fun onInit(statusCode: Int) {
         if (statusCode != TextToSpeech.SUCCESS) return
         tts.language = Locale.US
+        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onDone(utteranceId: String?) { runOnUiThread { setBusy(false); setStatus("ready") } }
+            @Deprecated("deprecated") override fun onError(utteranceId: String?) { runOnUiThread { setBusy(false) } }
+        })
         runOnUiThread { loadVoices() }
     }
 
@@ -171,6 +172,27 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun micColor(res: Int) {
         talk.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, res))
+    }
+
+    private fun setBusy(b: Boolean) {
+        busy = b
+        if (b) {
+            talk.setImageResource(android.R.drawable.ic_menu_close_clear_cancel)
+            micColor(R.color.mic_busy)
+        } else {
+            talk.setImageResource(android.R.drawable.ic_btn_speak_now)
+            micColor(R.color.mic_idle)
+        }
+    }
+
+    private fun interrupt() {
+        tts.stop()
+        stopPlayer()
+        currentCall?.cancel()
+        chatJob?.cancel()
+        recording.set(false)
+        setBusy(false)
+        setStatus("stopped")
     }
 
     private fun refreshAgents() = ui.launch {
@@ -294,6 +316,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             )
         } catch (e: SecurityException) { setStatus("microphone unavailable"); return }
         recording.set(true)
+        micColor(R.color.mic_recording)
         setStatus("listening…")
         recordThread = Thread {
             val buf = ByteArray(minBuf)
@@ -312,28 +335,29 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         recording.set(false)
         recordThread?.join()
         val audio = synchronized(pcm) { pcm.toByteArray() }
-        if (audio.isEmpty()) { setStatus("nothing recorded"); return }
+        if (audio.isEmpty()) { setStatus("nothing recorded"); setBusy(false); return }
         val aid = currentAgentId
-        if (aid == null) { setStatus("no agent selected — swipe right to add one"); return }
+        if (aid == null) { setStatus("no agent selected — swipe right to add one"); setBusy(false); return }
         val body = wav(audio).toRequestBody("audio/wav".toMediaType())
+        setBusy(true)
         setStatus("transcribing…")
         chatJob = ui.launch {
             val said = post("${base()}/stt", body)
-            if (said.isNullOrBlank()) { setStatus("speech-to-text failed"); return@launch }
+            if (said.isNullOrBlank()) { setStatus("speech-to-text failed"); setBusy(false); return@launch }
             append("you", said)
             setStatus("thinking…")
             val payload = JSONObject().put("text", said).put("agent", aid).toString().toRequestBody(jsonType)
             val reply = post("${base()}/chat", payload)
-            if (reply.isNullOrBlank()) { setStatus("agent failed"); return@launch }
+            if (reply.isNullOrBlank()) { setStatus("agent failed"); setBusy(false); return@launch }
             append("agent", forDisplay(reply))
-            setStatus("ready")
+            setStatus("speaking…")
             val speech = forSpeech(reply)
             if (usePiper) speakPiper(speech) else tts.speak(speech, TextToSpeech.QUEUE_FLUSH, null, "reply")
         }
     }
 
     private fun speakPiper(text: String) {
-        ui.launch {
+        chatJob = ui.launch {
             val wav = postBytes("${base()}/tts", JSONObject().put("text", text).toString().toRequestBody(jsonType))
             if (wav == null || wav.isEmpty()) {
                 tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
@@ -350,12 +374,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             stopPlayer()
             player = MediaPlayer().apply {
                 setDataSource(f.absolutePath)
-                setOnCompletionListener { mp -> mp.release(); if (player === mp) player = null }
+                setOnCompletionListener { mp -> mp.release(); if (player === mp) player = null; setBusy(false); setStatus("ready") }
                 prepare()
                 start()
             }
         } catch (e: Exception) {
-            setStatus("playback failed")
+            setStatus("playback failed"); setBusy(false)
         }
     }
 

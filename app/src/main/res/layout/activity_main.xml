@@ -27,68 +27,56 @@
                 android:lineSpacingMultiplier="1.1" />
         </ScrollView>
 
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
-            android:id="@+id/talk"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_above="@+id/bottombar"
-            android:layout_alignParentEnd="true"
-            android:layout_marginEnd="16dp"
-            android:layout_marginBottom="12dp"
-            android:contentDescription="@string/hold_to_talk"
-            android:src="@android:drawable/ic_btn_speak_now"
-            app:backgroundTint="@color/mic_idle"
-            app:fabCustomSize="84dp"
-            app:maxImageSize="40dp"
-            app:tint="@android:color/white" />
-
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
-            android:id="@+id/stop"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_alignBottom="@+id/talk"
-            android:layout_toStartOf="@+id/talk"
-            android:layout_marginEnd="14dp"
-            android:contentDescription="@string/stop"
-            android:src="@android:drawable/ic_menu_close_clear_cancel"
-            app:backgroundTint="@color/stop_btn"
-            app:fabCustomSize="48dp"
-            app:maxImageSize="24dp"
-            app:tint="@android:color/white" />
-
         <LinearLayout
             android:id="@+id/bottombar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_alignParentBottom="true"
             android:background="@color/bottom_bar"
-            android:orientation="horizontal"
             android:gravity="center_vertical"
+            android:orientation="horizontal"
             android:paddingStart="14dp"
-            android:paddingEnd="14dp"
-            android:paddingTop="5dp"
-            android:paddingBottom="5dp">
+            android:paddingEnd="12dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp">
 
-            <TextView
-                android:id="@+id/status"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="ready"
-                android:textColor="@color/status_text"
-                android:textSize="13sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/workdir"
+            <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="10dp"
-                android:ellipsize="start"
-                android:singleLine="true"
-                android:text="@string/no_agent"
-                android:textColor="@color/workdir_text"
-                android:textSize="12sp" />
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/status"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ready"
+                    android:textColor="@color/status_text"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/workdir"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="start"
+                    android:singleLine="true"
+                    android:text="@string/no_agent"
+                    android:textColor="@color/workdir_text"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <com.google.android.material.floatingactionbutton.FloatingActionButton
+                android:id="@+id/talk"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:contentDescription="@string/hold_to_talk"
+                android:src="@android:drawable/ic_btn_speak_now"
+                app:backgroundTint="@color/mic_idle"
+                app:fabCustomSize="62dp"
+                app:maxImageSize="30dp"
+                app:tint="@android:color/white" />
         </LinearLayout>
     </RelativeLayout>
 
