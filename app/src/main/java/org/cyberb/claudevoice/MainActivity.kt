@@ -621,7 +621,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 val text = o.optString("text")
                 appendReply(text)
                 setStatus("speaking…")
-                val speech = forSpeech(text)
+                val narration = o.optString("speech", "")
+                val speech = if (narration.isNotBlank()) narration else forSpeech(text)
                 if (usePiper) speakPiper(speech) else tts.speak(speech, TextToSpeech.QUEUE_FLUSH, null, "reply")
             }
         }

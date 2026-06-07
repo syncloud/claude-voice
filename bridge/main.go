@@ -44,7 +44,19 @@ var (
 	piperEspeak = env("PIPER_ESPEAK", filepath.Join(filepath.Dir(piperBin), "espeak-ng-data"))
 	piperVoices = env("PIPER_VOICES", expand("~/piper-voices"))
 	piperModel  = env("PIPER_MODEL", "")
+
+	narrateModel = env("NARRATE_MODEL", "haiku")
+	narrateOn    = env("VOICE_NARRATE", "1") != "0"
 )
+
+const narrateMarker = "===SPOKEN==="
+
+const narrateSystem = `IMPORTANT OUTPUT RULE: Whenever your reply contains any code, you MUST end your message with a line containing exactly ===SPOKEN=== followed by a spoken narration of your entire reply for a developer who cannot see the screen. In the narration, read all code in full natural-language detail: name every declaration, identifier, type, parameter, and return, and describe the control flow and logic; phrase symbols naturally and never read punctuation literally. If your reply contains no code, do NOT add the marker or narration.`
+
+const narratePrompt = `You turn an AI coding assistant's reply into spoken narration for an experienced developer who knows this codebase but cannot see the screen (for example a blind developer pair-programming with AI). Speak the prose naturally. For any code, narrate it completely and precisely — every declaration, identifier, type, parameter, return value, and the control flow and key logic — the way a developer dictates code to a peer, so no detail is lost. Do not spell out punctuation or read symbols literally; phrase them naturally (for example: "assigns", "returns a list of strings", "for each item", "if x is greater than zero", "an arrow function taking req and res"). Use the real identifiers. Announce structure briefly ("function fetchUser, taking an id of type string, returns a User"). Keep it flowing and listenable, preserve order, and output only the narration with no preamble.
+
+Reply to narrate:
+`
 
 type agent struct {
 	dir     string
@@ -308,7 +320,16 @@ func transform(line []byte) [][]byte {
 			out = append(out, mustJSON(map[string]interface{}{"t": "usage", "in": ti, "out": to, "max": maxCtx}))
 		}
 		res, _ := ev["result"].(string)
-		out = append(out, mustJSON(map[string]string{"t": "reply", "text": res}))
+		display, speech := res, ""
+		if idx := strings.Index(res, narrateMarker); idx >= 0 {
+			display = strings.TrimSpace(res[:idx])
+			speech = strings.TrimSpace(res[idx+len(narrateMarker):])
+		}
+		ev2 := map[string]string{"t": "reply", "text": display}
+		if speech != "" {
+			ev2["speech"] = speech
+		}
+		out = append(out, mustJSON(ev2))
 	}
 	return out
 }
@@ -547,6 +568,36 @@ func agentDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, agentList())
 }
 
+func narrate(text string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "claude", "-p", "--model", narrateModel,
+		"--permission-mode", perm, narratePrompt+text)
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+func narrateHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeText(w, 405, "method not allowed")
+		return
+	}
+	var p struct {
+		Text string `json:"text"`
+	}
+	json.NewDecoder(r.Body).Decode(&p)
+	if strings.TrimSpace(p.Text) == "" {
+		writeText(w, 400, "empty text")
+		return
+	}
+	n, err := narrate(p.Text)
+	if err != nil || n == "" {
+		writeText(w, 500, "narrate failed")
+		return
+	}
+	writeText(w, 200, n)
+}
+
 func sttHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeText(w, 405, "method not allowed")
@@ -689,7 +740,12 @@ func historyEvents(dir, id string) [][]byte {
 				switch bm["type"] {
 				case "text":
 					if t, ok := bm["text"].(string); ok && strings.TrimSpace(t) != "" {
-						out = append(out, mustJSON(map[string]string{"t": "reply", "text": t}))
+						if idx := strings.Index(t, narrateMarker); idx >= 0 {
+							t = strings.TrimSpace(t[:idx])
+						}
+						if t != "" {
+							out = append(out, mustJSON(map[string]string{"t": "reply", "text": t}))
+						}
 					}
 				case "tool_use":
 					name, _ := bm["name"].(string)
@@ -808,6 +864,9 @@ func chatHandler(w http.ResponseWriter, r *http.Request) {
 	if resume != "" {
 		args = append(args, "--resume", resume)
 	}
+	if narrateOn {
+		args = append(args, "--append-system-prompt", narrateSystem)
+	}
 	args = append(args, "--permission-mode", perm, p.Text)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
 	defer cancel()
@@ -870,6 +929,7 @@ func main() {
 	mux.HandleFunc("/chat", chatHandler)
 	mux.HandleFunc("/tts", ttsHandler)
 	mux.HandleFunc("/voices", voicesHandler)
+	mux.HandleFunc("/narrate", narrateHandler)
 
 	addr := host + ":" + port
 	fmt.Printf("claude-voice bridge on http://%s  (perm=%s, start_dir=%s)\n", addr, perm, start)
