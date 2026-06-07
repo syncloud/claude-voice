@@ -160,30 +160,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             drawer.closeDrawers()
         }
 
-        agentList.setOnItemLongClickListener { _, _, pos, _ ->
-            val a = agents[pos]
-            AlertDialog.Builder(this)
-                .setTitle("Remove agent")
-                .setMessage("Remove “${a.name}”? This just stops tracking it — the directory and its files are untouched.")
-                .setPositiveButton("Remove") { _, _ ->
-                    ui.launch {
-                        val s = httpDelete("${base()}/agents/${a.id}") ?: run { setStatus("remove failed"); return@launch }
-                        transcripts.remove(a.id)
-                        ctxByAgent.remove(a.id)
-                        setAgents(parseAgents(s))
-                        agentsSig = ""
-                        if (currentAgentId == a.id) {
-                            currentAgentId = agents.firstOrNull()?.id
-                            showTranscript()
-                        }
-                        updateBottom()
-                    }
-                }
-                .setNegativeButton("Cancel", null)
-                .show()
-            true
-        }
-
         findViewById<Button>(R.id.addAgent).setOnClickListener { openDirPicker() }
         findViewById<TextView>(R.id.clearBtn).setOnClickListener {
             val id = currentAgentId ?: return@setOnClickListener
@@ -365,6 +341,28 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         agentList.adapter = AgentAdapter(agents.toList())
     }
 
+    private fun removeAgent(a: Agent) {
+        AlertDialog.Builder(this)
+            .setTitle("Remove agent")
+            .setMessage("Remove “${a.name}”? This just stops tracking it — the directory and its files are untouched.")
+            .setPositiveButton("Remove") { _, _ ->
+                ui.launch {
+                    val s = httpDelete("${base()}/agents/${a.id}") ?: run { setStatus("remove failed"); return@launch }
+                    transcripts.remove(a.id)
+                    ctxByAgent.remove(a.id)
+                    setAgents(parseAgents(s))
+                    agentsSig = ""
+                    if (currentAgentId == a.id) {
+                        currentAgentId = agents.firstOrNull()?.id
+                        showTranscript()
+                    }
+                    updateBottom()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private inner class AgentAdapter(private val items: List<Agent>) :
         ArrayAdapter<Agent>(this, R.layout.item_agent, items) {
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
@@ -382,6 +380,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
             v.findViewById<TextView>(R.id.agentDot).setTextColor(
                 ContextCompat.getColor(this@MainActivity, if (a.exists) R.color.dot_ok else R.color.dot_down))
+            v.findViewById<TextView>(R.id.agentClose).setOnClickListener { removeAgent(a) }
             return v
         }
     }
