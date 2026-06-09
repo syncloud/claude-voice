@@ -7,11 +7,15 @@ import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -114,6 +118,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         override fun run() { healthCheck(); poller.postDelayed(this, 4000) }
     }
     private var agentsSig = ""
+    private lateinit var audioManager: AudioManager
+    private val audioCb = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) { updateStatusLine() }
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) { updateStatusLine() }
+    }
 
     private val agents = mutableListOf<Agent>()
     private var currentAgentId: Int? = null
@@ -135,6 +144,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         serverStatus = findViewById(R.id.serverStatus)
         voiceSpinner = findViewById(R.id.voiceSpinner)
         talk = findViewById(R.id.talk)
+
+        audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        audioManager.registerAudioDeviceCallback(audioCb, ticker)
 
         tts = TextToSpeech(this, this)
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
@@ -541,6 +553,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             )
         } catch (e: SecurityException) { setStatus("microphone unavailable"); return }
         recording.set(true)
+        btInputDevice()?.let { try { record.setPreferredDevice(it) } catch (e: Exception) { } }
         micColor(R.color.mic_recording)
         setStatus("listening…")
         recordThread = Thread {
@@ -973,8 +986,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (tokIn > 0 || tokOut > 0) {
             sb.append("   ↑").append(fmtTok(tokIn)).append(" ↓").append(fmtTok(tokOut))
         }
+        sb.append("   🎙 ").append(micLabel())
         status.text = sb.toString()
     }
+
+    private fun btInputDevice(): AudioDeviceInfo? {
+        if (!::audioManager.isInitialized) return null
+        return try {
+            audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull {
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                    (Build.VERSION.SDK_INT >= 31 && it.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+            }
+        } catch (e: Exception) { null }
+    }
+
+    private fun micLabel() = if (btInputDevice() != null) "buds" else "phone"
 
     private fun fmtTok(n: Int) = if (n >= 1000) "${n / 1000}k" else "$n"
 
@@ -995,6 +1021,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onDestroy()
         recording.set(false)
         stopPlayer()
+        if (::audioManager.isInitialized) audioManager.unregisterAudioDeviceCallback(audioCb)
         tts.shutdown()
     }
 }
