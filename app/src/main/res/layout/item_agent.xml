@@ -33,10 +33,21 @@
     </LinearLayout>
 
     <TextView
+        android:id="@+id/agentNarrate"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:focusable="false"
+        android:padding="6dp"
+        android:text="📢"
+        android:textSize="16sp" />
+
+    <TextView
         android:id="@+id/agentDot"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginStart="8dp"
+        android:layout_marginStart="6dp"
         android:text="●"
         android:textSize="14sp" />
 

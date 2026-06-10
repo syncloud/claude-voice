@@ -49,12 +49,6 @@
             android:layout_height="wrap_content"
             android:text="@string/speak_status" />
 
-        <CheckBox
-            android:id="@+id/narrateBox"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/narrate_code" />
-
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

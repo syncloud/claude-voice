@@ -394,6 +394,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
             v.findViewById<TextView>(R.id.agentDot).setTextColor(
                 ContextCompat.getColor(this@MainActivity, if (a.exists) R.color.dot_ok else R.color.dot_down))
+            val nar = v.findViewById<TextView>(R.id.agentNarrate)
+            nar.alpha = if (cvPrefs().getBoolean("narrate_${a.id}", false)) 1f else 0.35f
+            nar.setOnClickListener {
+                val cur = cvPrefs().getBoolean("narrate_${a.id}", false)
+                cvPrefs().edit().putBoolean("narrate_${a.id}", !cur).apply()
+                nar.alpha = if (!cur) 1f else 0.35f
+            }
             v.findViewById<TextView>(R.id.agentClose).setOnClickListener { removeAgent(a) }
             return v
         }

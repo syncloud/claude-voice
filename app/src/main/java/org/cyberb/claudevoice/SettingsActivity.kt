@@ -38,7 +38,6 @@ class SettingsActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var bridgeUrl: EditText
     private lateinit var usePiper: CheckBox
     private lateinit var speakStatus: CheckBox
-    private lateinit var narrate: CheckBox
     private lateinit var bgMode: CheckBox
     private lateinit var triggerGroup: RadioGroup
     private lateinit var voiceSpinner: Spinner
@@ -57,7 +56,6 @@ class SettingsActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         bridgeUrl = findViewById(R.id.bridgeUrl)
         usePiper = findViewById(R.id.piperSwitch)
         speakStatus = findViewById(R.id.speakStatusBox)
-        narrate = findViewById(R.id.narrateBox)
         bgMode = findViewById(R.id.bgMode)
         triggerGroup = findViewById(R.id.triggerGroup)
         voiceSpinner = findViewById(R.id.voiceSpinner)
@@ -65,8 +63,6 @@ class SettingsActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         bridgeUrl.setText(prefs().getString("bridge", "http://127.0.0.1:8765"))
         usePiper.isChecked = prefs().getBoolean("piper", false)
         speakStatus.isChecked = prefs().getBoolean("speakStatus", true)
-        val aid = prefs().getInt("agent", -1)
-        narrate.isChecked = prefs().getBoolean("narrate_$aid", false)
         bgMode.isChecked = prefs().getBoolean("running", false)
         when (prefs().getString("trigger", "accessibility")) {
             "msvolume" -> triggerGroup.check(R.id.trigMsVol)
@@ -79,9 +75,6 @@ class SettingsActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             if (c) loadPiperVoices() else loadTtsVoices()
         }
         speakStatus.setOnCheckedChangeListener { _, c -> prefs().edit().putBoolean("speakStatus", c).apply() }
-        narrate.setOnCheckedChangeListener { _, c ->
-            if (aid >= 0) prefs().edit().putBoolean("narrate_$aid", c).apply()
-        }
         bgMode.setOnCheckedChangeListener { _, c ->
             prefs().edit().putBoolean("running", c).apply()
             saveBridge()
