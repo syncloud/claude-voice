@@ -561,7 +561,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         } catch (e: SecurityException) { setStatus("microphone unavailable"); return }
         recording.set(true)
         beep(ToneGenerator.TONE_PROP_BEEP)
-        btInputDevice()?.let { try { record.setPreferredDevice(it) } catch (e: Exception) { } }
         micColor(R.color.mic_recording)
         setStatus("listening…")
         recordThread = Thread {
