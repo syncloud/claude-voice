@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
@@ -16,7 +17,9 @@ import android.media.VolumeProvider
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -69,13 +72,20 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
     private fun trigger() = prefs().getString("trigger", "accessibility") ?: "accessibility"
 
     private fun toggleTalk() {
-        if (recording.get()) stopRecAndSend() else startRec()
+        when {
+            recording.get() -> stopRecAndSend()
+            starting.get() -> { handler.removeCallbacks(beginRunnable); starting.set(false); releaseBt(); notify("ready") }
+            else -> startRec()
+        }
     }
 
     private fun cancelTalk() {
+        handler.removeCallbacks(beginRunnable)
+        starting.set(false)
         recording.set(false)
         try { recordThread?.join() } catch (e: Exception) { }
         pcm.reset()
+        releaseBt()
         currentCall?.cancel()
         turnJob?.cancel()
         tts?.stop()
@@ -176,18 +186,52 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
         return START_STICKY
     }
 
+    private val handler = Handler(Looper.getMainLooper())
+    private val starting = AtomicBoolean(false)
+    private var commDeviceSet = false
+    private val beginRunnable = Runnable { starting.set(false); beginRecord(true) }
+
+    private fun btMic() = prefs().getBoolean("btmic", false)
+
+    private fun engageBt(): Boolean {
+        if (Build.VERSION.SDK_INT < 31) return false
+        return try {
+            val am = getSystemService(AUDIO_SERVICE) as AudioManager
+            val dev = am.availableCommunicationDevices.firstOrNull {
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
+            } ?: return false
+            commDeviceSet = am.setCommunicationDevice(dev)
+            commDeviceSet
+        } catch (e: Exception) { false }
+    }
+
+    private fun releaseBt() {
+        if (commDeviceSet && Build.VERSION.SDK_INT >= 31) {
+            try { (getSystemService(AUDIO_SERVICE) as AudioManager).clearCommunicationDevice() } catch (e: Exception) { }
+        }
+        commDeviceSet = false
+    }
+
     private fun startRec() {
-        if (recording.get()) return
+        if (recording.get() || starting.get()) return
         pcm.reset()
+        if (btMic() && engageBt()) {
+            starting.set(true)
+            notify("connecting buds…")
+            handler.postDelayed(beginRunnable, 1200)
+        } else {
+            beginRecord(false)
+        }
+    }
+
+    private fun beginRecord(bt: Boolean) {
+        val source = if (bt) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.MIC
         val minBuf = AudioRecord.getMinBufferSize(
             sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
         val rec = try {
-            AudioRecord(
-                MediaRecorder.AudioSource.MIC, sampleRate,
-                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuf
-            )
-        } catch (e: Exception) { notify("mic unavailable"); return }
+            AudioRecord(source, sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuf)
+        } catch (e: Exception) { releaseBt(); notify("mic unavailable"); return }
         recording.set(true)
         beep(ToneGenerator.TONE_PROP_BEEP)
         notify("listening…")
@@ -207,6 +251,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
         recording.set(false)
         recordThread?.join()
         beep(ToneGenerator.TONE_PROP_BEEP2)
+        releaseBt()
         val audio = synchronized(pcm) { pcm.toByteArray() }
         if (audio.isEmpty()) { notify("ready"); return }
         val aid = agent()

@@ -28,5 +28,6 @@
     <string name="trig_msvol">Vol keys tap (MediaSession)</string>
     <string name="trig_media">Headset / bud button (tap)</string>
     <string name="key_setup">Enable key control (Accessibility)</string>
+    <string name="bt_mic">Use Bluetooth mic (buds) — adds ~1s to engage</string>
     <string name="accessibility_desc">Lets Claude Voice use Volume-Up as a push-to-talk button while the screen is off.</string>
 </resources>

@@ -99,5 +99,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/key_setup" />
+
+        <CheckBox
+            android:id="@+id/btMicBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/bt_mic" />
     </LinearLayout>
 </ScrollView>

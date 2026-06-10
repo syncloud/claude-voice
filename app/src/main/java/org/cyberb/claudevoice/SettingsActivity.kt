@@ -39,6 +39,7 @@ class SettingsActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private lateinit var usePiper: CheckBox
     private lateinit var speakStatus: CheckBox
     private lateinit var bgMode: CheckBox
+    private lateinit var btMic: CheckBox
     private lateinit var triggerGroup: RadioGroup
     private lateinit var voiceSpinner: Spinner
 
@@ -57,6 +58,7 @@ class SettingsActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         usePiper = findViewById(R.id.piperSwitch)
         speakStatus = findViewById(R.id.speakStatusBox)
         bgMode = findViewById(R.id.bgMode)
+        btMic = findViewById(R.id.btMicBox)
         triggerGroup = findViewById(R.id.triggerGroup)
         voiceSpinner = findViewById(R.id.voiceSpinner)
 
@@ -64,6 +66,7 @@ class SettingsActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         usePiper.isChecked = prefs().getBoolean("piper", false)
         speakStatus.isChecked = prefs().getBoolean("speakStatus", true)
         bgMode.isChecked = prefs().getBoolean("running", false)
+        btMic.isChecked = prefs().getBoolean("btmic", false)
         when (prefs().getString("trigger", "accessibility")) {
             "msvolume" -> triggerGroup.check(R.id.trigMsVol)
             "mediabutton" -> triggerGroup.check(R.id.trigMedia)
@@ -101,6 +104,7 @@ class SettingsActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         findViewById<Button>(R.id.keySetup).setOnClickListener {
             try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } catch (e: Exception) { }
         }
+        btMic.setOnCheckedChangeListener { _, c -> prefs().edit().putBoolean("btmic", c).apply() }
 
         tts = TextToSpeech(this, this)
     }
