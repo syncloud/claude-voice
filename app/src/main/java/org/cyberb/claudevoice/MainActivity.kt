@@ -3,7 +3,10 @@ package org.cyberb.claudevoice
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -109,6 +112,21 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var player: MediaPlayer? = null
     private var toneGen: ToneGenerator? = null
     private var speakStatus = true
+    private val eventReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val type = intent?.getStringExtra("type") ?: return
+            val text = intent.getStringExtra("text") ?: ""
+            when (type) {
+                "you" -> appendYou(text)
+                "reply" -> appendReply(text)
+                "status" -> {
+                    setStatus(text)
+                    val busyNow = text == "listening…" || text == "thinking…" || text == "speaking…"
+                    if (busyNow != busy) setBusy(busyNow)
+                }
+            }
+        }
+    }
     private var busy = false
     private var tokIn = 0
     private var tokOut = 0
@@ -153,6 +171,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         audioManager.registerAudioDeviceCallback(audioCb, ticker)
+        ContextCompat.registerReceiver(this, eventReceiver, IntentFilter("org.cyberb.claudevoice.EVENT"), ContextCompat.RECEIVER_NOT_EXPORTED)
 
         tts = TextToSpeech(this, this)
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
@@ -342,6 +361,9 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         recording.set(false)
         setBusy(false)
         setStatus("stopped")
+        if (getSharedPreferences("cv", MODE_PRIVATE).getBoolean("running", false)) {
+            try { startService(Intent(this, VoiceService::class.java).setAction(VoiceService.ACTION_CANCEL)) } catch (e: Exception) { }
+        }
     }
 
     private fun refreshAgents() = ui.launch {
@@ -1082,6 +1104,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         stopPlayer()
         toneGen?.release()
         if (::audioManager.isInitialized) audioManager.unregisterAudioDeviceCallback(audioCb)
+        try { unregisterReceiver(eventReceiver) } catch (e: Exception) { }
         tts.shutdown()
     }
 }

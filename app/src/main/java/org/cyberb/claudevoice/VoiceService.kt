@@ -44,6 +44,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_TALK_STOP = "talk_stop"
         const val ACTION_ARM = "arm_toggle"
         const val ACTION_RECONFIG = "reconfig"
+        const val ACTION_CANCEL = "cancel"
         const val ACTION_STOP = "stop"
         const val CHANNEL = "voice"
         const val NOTIF = 1
@@ -166,6 +167,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
         when (intent?.action) {
             ACTION_TALK_START -> startRec()
             ACTION_TALK_STOP -> stopRecAndSend()
+            ACTION_CANCEL -> cancelTalk()
             ACTION_ARM -> { prefs().edit().putBoolean("armed", !armed()).apply(); notify("ready") }
             ACTION_RECONFIG -> setupTrigger()
             ACTION_STOP -> { teardownTrigger(); @Suppress("DEPRECATION") stopForeground(true); stopSelf(); return START_NOT_STICKY }
@@ -214,6 +216,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
         turnJob = scope.launch {
             val said = post("${base()}/stt", wav(audio).toRequestBody("audio/wav".toMediaType()))
             if (said.isNullOrBlank()) { notify("speech-to-text failed"); return@launch }
+            broadcast("you", said)
             val payload = JSONObject().put("text", said).put("agent", aid).toString().toRequestBody(jsonType)
             var replyText = ""
             var speech = ""
@@ -237,6 +240,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
             }
             val toSpeak = if (speech.isNotBlank()) speech else clean(replyText)
             if (toSpeak.isBlank()) { notify("no response"); return@launch }
+            broadcast("reply", if (replyText.isNotBlank()) replyText else toSpeak)
             notify("speaking…")
             speakOut(toSpeak)
         }
@@ -346,6 +350,16 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
 
     private fun notify(status: String) {
         getSystemService(NotificationManager::class.java).notify(NOTIF, buildNotif(status))
+        broadcast("status", status)
+    }
+
+    private fun broadcast(type: String, text: String) {
+        try {
+            sendBroadcast(
+                Intent("org.cyberb.claudevoice.EVENT").setPackage(packageName)
+                    .putExtra("type", type).putExtra("text", text)
+            )
+        } catch (e: Exception) { }
     }
 
     override fun onDestroy() {
