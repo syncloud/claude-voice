@@ -24,6 +24,7 @@
     <string name="clear_short">clear</string>
     <string name="compact_short">compact</string>
     <string name="overflow_dots">⋮</string>
+    <string name="scroll_down">Scroll to bottom</string>
     <string name="actions_title">Conversation</string>
     <string name="action_clear">Clear conversation</string>
     <string name="action_compact">Compact conversation</string>

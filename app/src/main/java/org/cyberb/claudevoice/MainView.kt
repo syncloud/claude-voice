@@ -33,6 +33,7 @@ class MainView(private val host: VoiceHost, root: View) {
     private val workdir: TextView = root.findViewById(R.id.workdir)
     private val branch: TextView = root.findViewById(R.id.branch)
     private val talk: FloatingActionButton = root.findViewById(R.id.talk)
+    private val scrollDown: FloatingActionButton = root.findViewById(R.id.scrollDown)
 
     private val fmt = TextFormat(activity)
 
@@ -69,6 +70,14 @@ class MainView(private val host: VoiceHost, root: View) {
     init {
         bindTalk()
         root.findViewById<TextView>(R.id.overflowBtn).setOnClickListener { showActions() }
+        scrollDown.setOnClickListener { scroll.post { scroll.smoothScrollTo(0, transcript.bottom) } }
+        scroll.setOnScrollChangeListener { _, _, _, _, _ -> updateScrollDown() }
+    }
+
+    private fun updateScrollDown() {
+        val child = scroll.getChildAt(0) ?: return
+        val atBottom = child.bottom - (scroll.height + scroll.scrollY) <= 24
+        scrollDown.visibility = if (atBottom) View.GONE else View.VISIBLE
     }
 
     private fun showActions() {
