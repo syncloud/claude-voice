@@ -38,21 +38,6 @@ type agent struct {
 	session string
 }
 
-type agentInfo struct {
-	ID     int     `json:"id"`
-	Dir    string  `json:"dir"`
-	Name   string  `json:"name"`
-	Branch *string `json:"branch"`
-	Dirty  bool    `json:"dirty"`
-	Exists bool    `json:"exists"`
-}
-
-type sessionInfo struct {
-	ID      string `json:"id"`
-	Preview string `json:"preview"`
-	Mtime   int64  `json:"mtime"`
-}
-
 // Handlers is the implementation behind the HTTP routes: it owns the bridge
 // config and the in-memory agent registry, and shells out to claude/whisper/piper.
 type Handlers struct {
@@ -155,31 +140,29 @@ func trunc(s string, n int) string {
 	return s
 }
 
-func toolLabel(name string, in map[string]interface{}) string {
-	s := func(k string) string { v, _ := in[k].(string); return v }
+func toolLabel(name string, in toolInput) string {
 	switch name {
 	case "Bash":
-		return "Bash: " + trunc(s("command"), 100)
+		return "Bash: " + trunc(in.Command, 100)
 	case "Read":
-		return "Read " + filepath.Base(s("file_path"))
+		return "Read " + filepath.Base(in.FilePath)
 	case "Edit", "Write", "MultiEdit", "NotebookEdit":
-		return name + " " + filepath.Base(s("file_path"))
+		return name + " " + filepath.Base(in.FilePath)
 	case "Grep":
-		return "Grep " + s("pattern")
+		return "Grep " + in.Pattern
 	case "Glob":
-		return "Glob " + s("pattern")
+		return "Glob " + in.Pattern
 	case "WebFetch", "WebSearch":
-		return name + " " + s("url") + s("query")
+		return name + " " + in.URL + in.Query
 	case "Task":
-		return "Task: " + trunc(s("description"), 70)
+		return "Task: " + trunc(in.Description, 70)
 	default:
 		return name
 	}
 }
 
-func diffPatch(name string, in map[string]interface{}) (string, string, bool) {
-	s := func(k string) string { v, _ := in[k].(string); return v }
-	file := filepath.Base(s("file_path"))
+func diffPatch(name string, in toolInput) (string, string, bool) {
+	file := filepath.Base(in.FilePath)
 	minus := func(t string) string {
 		var b strings.Builder
 		for _, l := range strings.Split(strings.TrimRight(t, "\n"), "\n") {
@@ -203,17 +186,13 @@ func diffPatch(name string, in map[string]interface{}) (string, string, bool) {
 	}
 	switch name {
 	case "Edit":
-		return cap(minus(s("old_string")) + plus(s("new_string"))), file, true
+		return cap(minus(in.OldString) + plus(in.NewString)), file, true
 	case "Write":
-		return cap(plus(s("content"))), file, true
+		return cap(plus(in.Content)), file, true
 	case "MultiEdit":
-		edits, _ := in["edits"].([]interface{})
 		var b strings.Builder
-		for _, e := range edits {
-			m, _ := e.(map[string]interface{})
-			o, _ := m["old_string"].(string)
-			ns, _ := m["new_string"].(string)
-			b.WriteString(minus(o) + plus(ns))
+		for _, e := range in.Edits {
+			b.WriteString(minus(e.OldString) + plus(e.NewString))
 		}
 		return cap(b.String()), file, true
 	}
@@ -225,69 +204,42 @@ func mustJSON(v interface{}) []byte {
 	return b
 }
 
-func usageTokens(u map[string]interface{}) (int, int) {
-	n := func(k string) int {
-		if v, ok := u[k].(float64); ok {
-			return int(v)
-		}
-		return 0
-	}
-	in := n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens")
-	return in, n("output_tokens")
-}
-
-func transform(line []byte) [][]byte {
-	var ev map[string]interface{}
-	if json.Unmarshal(line, &ev) != nil {
-		return nil
-	}
-	out := [][]byte{}
-	switch ev["type"] {
+// transformEvent turns one parsed claude stream-json event into the typed
+// events the app consumes.
+func transformEvent(ev streamEvent) []Event {
+	out := []Event{}
+	switch ev.Type {
 	case "assistant":
-		msg, _ := ev["message"].(map[string]interface{})
-		content, _ := msg["content"].([]interface{})
-		for _, c := range content {
-			block, _ := c.(map[string]interface{})
-			if block["type"] != "tool_use" {
+		for _, b := range ev.Message.blocks() {
+			if b.Type != "tool_use" {
 				continue
 			}
-			name, _ := block["name"].(string)
-			in, _ := block["input"].(map[string]interface{})
-			out = append(out, mustJSON(map[string]string{"t": "action", "label": toolLabel(name, in)}))
-			if patch, file, ok := diffPatch(name, in); ok {
-				out = append(out, mustJSON(map[string]string{"t": "diff", "file": file, "patch": patch}))
+			out = append(out, Event{T: "action", Label: toolLabel(b.Name, b.Input)})
+			if patch, file, ok := diffPatch(b.Name, b.Input); ok {
+				out = append(out, Event{T: "diff", File: file, Patch: patch})
 			}
 		}
-		if u, ok := msg["usage"].(map[string]interface{}); ok {
-			ti, to := usageTokens(u)
-			out = append(out, mustJSON(map[string]interface{}{"t": "usage", "in": ti, "out": to}))
+		if ev.Message != nil && ev.Message.Usage != nil {
+			ti, to := ev.Message.Usage.inOut()
+			out = append(out, Event{T: "usage", In: intp(ti), Out: intp(to)})
 		}
 	case "result":
 		maxCtx := 0
-		if mu, ok := ev["modelUsage"].(map[string]interface{}); ok {
-			for _, v := range mu {
-				if m, ok := v.(map[string]interface{}); ok {
-					if cw, ok := m["contextWindow"].(float64); ok {
-						maxCtx = int(cw)
-					}
-				}
+		for _, m := range ev.ModelUsage {
+			if m.ContextWindow > maxCtx {
+				maxCtx = m.ContextWindow
 			}
 		}
-		if u, ok := ev["usage"].(map[string]interface{}); ok {
-			ti, to := usageTokens(u)
-			out = append(out, mustJSON(map[string]interface{}{"t": "usage", "in": ti, "out": to, "max": maxCtx}))
+		if ev.Usage != nil {
+			ti, to := ev.Usage.inOut()
+			out = append(out, Event{T: "usage", In: intp(ti), Out: intp(to), Max: intp(maxCtx)})
 		}
-		res, _ := ev["result"].(string)
-		display, speech := res, ""
-		if idx := strings.Index(res, narrateMarker); idx >= 0 {
-			display = strings.TrimSpace(res[:idx])
-			speech = strings.TrimSpace(res[idx+len(narrateMarker):])
+		display, speech := ev.Result, ""
+		if idx := strings.Index(ev.Result, narrateMarker); idx >= 0 {
+			display = strings.TrimSpace(ev.Result[:idx])
+			speech = strings.TrimSpace(ev.Result[idx+len(narrateMarker):])
 		}
-		ev2 := map[string]string{"t": "reply", "text": display}
-		if speech != "" {
-			ev2["speech"] = speech
-		}
-		out = append(out, mustJSON(ev2))
+		out = append(out, Event{T: "reply", Text: display, Speech: speech})
 	}
 	return out
 }
@@ -385,10 +337,7 @@ func (h *Handlers) Tts(w http.ResponseWriter, r *http.Request) {
 		writeText(w, 501, "piper not configured")
 		return
 	}
-	var p struct {
-		Text  string `json:"text"`
-		Voice string `json:"voice"`
-	}
+	var p ttsReq
 	json.NewDecoder(r.Body).Decode(&p)
 	if strings.TrimSpace(p.Text) == "" {
 		writeText(w, 400, "empty text")
@@ -410,10 +359,7 @@ func (h *Handlers) Agents(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		writeJSON(w, 200, h.agentList())
 	case http.MethodPost:
-		var p struct {
-			Dir     string `json:"dir"`
-			Session string `json:"session"`
-		}
+		var p agentReq
 		json.NewDecoder(r.Body).Decode(&p)
 		if strings.TrimSpace(p.Dir) == "" {
 			writeText(w, 400, "missing dir")
@@ -447,13 +393,11 @@ func (h *Handlers) runClaudeSession(dir, resume, text string) (string, string, e
 	if err != nil {
 		return "", "", err
 	}
-	var res map[string]interface{}
+	var res claudeResult
 	if json.Unmarshal(out, &res) != nil {
 		return strings.TrimSpace(string(out)), "", nil
 	}
-	t, _ := res["result"].(string)
-	s, _ := res["session_id"].(string)
-	return strings.TrimSpace(t), s, nil
+	return strings.TrimSpace(res.Result), res.SessionID, nil
 }
 
 func (h *Handlers) compactAgent(id int) (string, bool) {
@@ -499,7 +443,7 @@ func (h *Handlers) AgentByID(w http.ResponseWriter, r *http.Request) {
 			writeText(w, 500, "compact failed")
 			return
 		}
-		writeJSON(w, 200, map[string]string{"summary": summary})
+		writeJSON(w, 200, compactResp{Summary: summary})
 		return
 	}
 	if strings.HasSuffix(rest, "/clear") {
@@ -545,9 +489,7 @@ func (h *Handlers) Narrate(w http.ResponseWriter, r *http.Request) {
 		writeText(w, 405, "method not allowed")
 		return
 	}
-	var p struct {
-		Text string `json:"text"`
-	}
+	var p narrateReq
 	json.NewDecoder(r.Body).Decode(&p)
 	if strings.TrimSpace(p.Text) == "" {
 		writeText(w, 400, "empty text")
@@ -588,24 +530,16 @@ func sessionPreview(path string) string {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for sc.Scan() {
-		var m map[string]interface{}
-		if json.Unmarshal(sc.Bytes(), &m) != nil || m["type"] != "user" {
+		var ev streamEvent
+		if json.Unmarshal(sc.Bytes(), &ev) != nil || ev.Type != "user" {
 			continue
 		}
-		msg, _ := m["message"].(map[string]interface{})
-		switch c := msg["content"].(type) {
-		case string:
-			if strings.TrimSpace(c) != "" {
-				return trunc(c, 70)
-			}
-		case []interface{}:
-			for _, b := range c {
-				bm, _ := b.(map[string]interface{})
-				if bm["type"] == "text" {
-					if t, ok := bm["text"].(string); ok && strings.TrimSpace(t) != "" {
-						return trunc(t, 70)
-					}
-				}
+		if s := ev.Message.textContent(); strings.TrimSpace(s) != "" {
+			return trunc(s, 70)
+		}
+		for _, b := range ev.Message.blocks() {
+			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+				return trunc(b.Text, 70)
 			}
 		}
 	}
@@ -656,60 +590,50 @@ func (h *Handlers) Sessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, listSessions(dir))
 }
 
-func historyEvents(dir, id string) [][]byte {
+func historyEvents(dir, id string) []Event {
 	path := filepath.Join(home(), ".claude", "projects", encodeDir(dir), id+".jsonl")
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		return []Event{}
 	}
 	defer f.Close()
-	out := [][]byte{}
+	out := []Event{}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for sc.Scan() {
-		var ev map[string]interface{}
+		var ev streamEvent
 		if json.Unmarshal(sc.Bytes(), &ev) != nil {
 			continue
 		}
-		switch ev["type"] {
+		switch ev.Type {
 		case "user":
-			msg, _ := ev["message"].(map[string]interface{})
-			switch c := msg["content"].(type) {
-			case string:
-				if strings.TrimSpace(c) != "" {
-					out = append(out, mustJSON(map[string]string{"t": "you", "text": c}))
-				}
-			case []interface{}:
-				for _, b := range c {
-					bm, _ := b.(map[string]interface{})
-					if bm["type"] == "text" {
-						if t, ok := bm["text"].(string); ok && strings.TrimSpace(t) != "" {
-							out = append(out, mustJSON(map[string]string{"t": "you", "text": t}))
-						}
-					}
+			if s := ev.Message.textContent(); strings.TrimSpace(s) != "" {
+				out = append(out, Event{T: "you", Text: s})
+				continue
+			}
+			for _, b := range ev.Message.blocks() {
+				if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+					out = append(out, Event{T: "you", Text: b.Text})
 				}
 			}
 		case "assistant":
-			msg, _ := ev["message"].(map[string]interface{})
-			content, _ := msg["content"].([]interface{})
-			for _, b := range content {
-				bm, _ := b.(map[string]interface{})
-				switch bm["type"] {
+			for _, b := range ev.Message.blocks() {
+				switch b.Type {
 				case "text":
-					if t, ok := bm["text"].(string); ok && strings.TrimSpace(t) != "" {
-						if idx := strings.Index(t, narrateMarker); idx >= 0 {
-							t = strings.TrimSpace(t[:idx])
-						}
-						if t != "" {
-							out = append(out, mustJSON(map[string]string{"t": "reply", "text": t}))
-						}
+					t := b.Text
+					if strings.TrimSpace(t) == "" {
+						continue
+					}
+					if idx := strings.Index(t, narrateMarker); idx >= 0 {
+						t = strings.TrimSpace(t[:idx])
+					}
+					if t != "" {
+						out = append(out, Event{T: "reply", Text: t})
 					}
 				case "tool_use":
-					name, _ := bm["name"].(string)
-					in, _ := bm["input"].(map[string]interface{})
-					out = append(out, mustJSON(map[string]string{"t": "action", "label": toolLabel(name, in)}))
-					if patch, file, ok := diffPatch(name, in); ok {
-						out = append(out, mustJSON(map[string]string{"t": "diff", "file": file, "patch": patch}))
+					out = append(out, Event{T: "action", Label: toolLabel(b.Name, b.Input)})
+					if patch, file, ok := diffPatch(b.Name, b.Input); ok {
+						out = append(out, Event{T: "diff", File: file, Patch: patch})
 					}
 				}
 			}
@@ -735,16 +659,7 @@ func (h *Handlers) History(w http.ResponseWriter, r *http.Request) {
 		writeText(w, 400, "missing id")
 		return
 	}
-	evs := historyEvents(dir, id)
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Write([]byte("["))
-	for i, e := range evs {
-		if i > 0 {
-			w.Write([]byte(","))
-		}
-		w.Write(e)
-	}
-	w.Write([]byte("]"))
+	writeJSON(w, 200, historyEvents(dir, id))
 }
 
 func (h *Handlers) Ls(w http.ResponseWriter, r *http.Request) {
@@ -776,7 +691,7 @@ func (h *Handlers) Ls(w http.ResponseWriter, r *http.Request) {
 	if p := filepath.Dir(dir); p != dir {
 		parent = &p
 	}
-	writeJSON(w, 200, map[string]interface{}{"dir": dir, "parent": parent, "dirs": dirs})
+	writeJSON(w, 200, dirListing{Dir: dir, Parent: parent, Dirs: dirs})
 }
 
 func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
@@ -784,12 +699,7 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 		writeText(w, 405, "method not allowed")
 		return
 	}
-	var p struct {
-		Text    string `json:"text"`
-		Agent   *int   `json:"agent"`
-		Narrate *bool  `json:"narrate"`
-		Model   string `json:"model"`
-	}
+	var p chatReq
 	json.NewDecoder(r.Body).Decode(&p)
 	id := 0
 	if p.Agent != nil {
@@ -807,15 +717,15 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	flusher, _ := w.(http.Flusher)
-	emit := func(b []byte) {
-		w.Write(b)
+	emit := func(e Event) {
+		w.Write(mustJSON(e))
 		w.Write([]byte("\n"))
 		if flusher != nil {
 			flusher.Flush()
 		}
 	}
 	if a == nil || strings.TrimSpace(p.Text) == "" {
-		emit(mustJSON(map[string]string{"t": "reply", "text": "Unknown agent."}))
+		emit(Event{T: "reply", Text: "Unknown agent."})
 		return
 	}
 
@@ -840,7 +750,7 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 	cmd.Dir = dir
 	stdout, err := cmd.StdoutPipe()
 	if err != nil || cmd.Start() != nil {
-		emit(mustJSON(map[string]string{"t": "reply", "text": "Failed to start agent."}))
+		emit(Event{T: "reply", Text: "Failed to start agent."})
 		return
 	}
 	sc := bufio.NewScanner(stdout)
@@ -868,45 +778,39 @@ func (h *Handlers) Chat(w http.ResponseWriter, r *http.Request) {
 				scanning = false
 				break
 			}
-			if strings.Contains(string(line), "session_id") {
-				var m map[string]interface{}
-				if json.Unmarshal(line, &m) == nil {
-					if s, ok := m["session_id"].(string); ok && s != "" {
-						newSession = s
-					}
+			var ev streamEvent
+			if json.Unmarshal(line, &ev) != nil {
+				continue
+			}
+			if ev.SessionID != "" {
+				newSession = ev.SessionID
+			}
+			if !sentModel {
+				name := ev.Model
+				if name == "" && ev.Message != nil {
+					name = ev.Message.Model
+				}
+				if name != "" {
+					sentModel = true
+					emit(Event{T: "model", Name: name})
 				}
 			}
-			if !sentModel && strings.Contains(string(line), `"model"`) {
-				var m map[string]interface{}
-				if json.Unmarshal(line, &m) == nil {
-					name, _ := m["model"].(string)
-					if name == "" {
-						if msg, ok := m["message"].(map[string]interface{}); ok {
-							name, _ = msg["model"].(string)
-						}
-					}
-					if name != "" {
-						sentModel = true
-						emit(mustJSON(map[string]string{"t": "model", "name": name}))
-					}
-				}
-			}
-			for _, e := range transform(line) {
-				if strings.Contains(string(e), `"t":"reply"`) {
+			for _, e := range transformEvent(ev) {
+				if e.T == "reply" {
 					sawReply = true
 				}
 				emit(e)
 			}
 		case <-heartbeat.C:
-			emit(mustJSON(map[string]string{"t": "working", "text": working[hbn%len(working)]}))
+			emit(Event{T: "working", Text: working[hbn%len(working)]})
 			hbn++
 		}
 	}
 	cmd.Wait()
 	if ctx.Err() == context.DeadlineExceeded {
-		emit(mustJSON(map[string]string{"t": "reply", "text": fmt.Sprintf("The agent took longer than %d seconds, so I stopped it. Try a smaller step.", h.cfg.Timeout)}))
+		emit(Event{T: "reply", Text: fmt.Sprintf("The agent took longer than %d seconds, so I stopped it. Try a smaller step.", h.cfg.Timeout)})
 	} else if !sawReply {
-		emit(mustJSON(map[string]string{"t": "reply", "text": "No response."}))
+		emit(Event{T: "reply", Text: "No response."})
 	}
 	h.mu.Lock()
 	if h.agents[id] != nil && newSession != "" {
