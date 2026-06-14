@@ -37,7 +37,18 @@ class MainView(private val host: VoiceHost, root: View) {
 
     private val fmt = TextFormat(activity)
 
-    private val MODELS = listOf("", "opus", "sonnet", "haiku")
+    private class ModelOption(val value: String, val label: String)
+
+    private val MODELS = listOf(
+        ModelOption("", "default"),
+        ModelOption("opus", "opus-latest"),
+        ModelOption("claude-opus-4-8", "opus-4.8"),
+        ModelOption("claude-opus-4-6", "opus-4.6"),
+        ModelOption("sonnet", "sonnet-latest"),
+        ModelOption("claude-sonnet-4-6", "sonnet-4.6"),
+        ModelOption("haiku", "haiku-latest"),
+        ModelOption("claude-haiku-4-5", "haiku-4.5"),
+    )
 
     private val audio = AudioEngine(
         host,
@@ -103,12 +114,12 @@ class MainView(private val host: VoiceHost, root: View) {
 
     private fun showModelPicker() {
         val id = host.currentAgentId ?: return
-        val labels = MODELS.map { if (it.isBlank()) activity.getString(R.string.model_default) else it }.toTypedArray()
-        val checked = MODELS.indexOf(model(id)).coerceAtLeast(0)
+        val labels = MODELS.map { it.label }.toTypedArray()
+        val checked = MODELS.indexOfFirst { it.value == model(id) }.coerceAtLeast(0)
         AlertDialog.Builder(activity)
             .setTitle(R.string.model_title)
             .setSingleChoiceItems(labels, checked) { dlg, which ->
-                prefs().edit().putString("model_$id", MODELS[which]).apply()
+                prefs().edit().putString("model_$id", MODELS[which].value).apply()
                 host.modelByAgent.remove(id)
                 updateBottom()
                 dlg.dismiss()
@@ -120,9 +131,10 @@ class MainView(private val host: VoiceHost, root: View) {
     private fun model(id: Int) = prefs().getString("model_$id", "") ?: ""
 
     private fun modelLabel(): String {
-        val id = host.currentAgentId ?: return activity.getString(R.string.model_default)
+        val id = host.currentAgentId ?: return "default"
         host.modelByAgent[id]?.let { return it }
-        return model(id).ifBlank { activity.getString(R.string.model_default) }
+        val v = model(id)
+        return MODELS.firstOrNull { it.value == v }?.label ?: v.ifBlank { "default" }
     }
 
     private fun fmtModel(raw: String): String =
