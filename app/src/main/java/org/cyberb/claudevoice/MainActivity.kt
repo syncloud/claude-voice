@@ -19,7 +19,6 @@ import android.media.AudioRecord
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.media.ToneGenerator
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -65,10 +64,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Locale
@@ -80,7 +75,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private val sampleRate = 16000
     private val ui = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    internal var http = BridgeHttp()
+    internal var http = BridgeHttp({ base() })
 
     private val recording = AtomicBoolean(false)
     private var recordThread: Thread? = null
@@ -239,7 +234,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private fun clearAgent() {
         val id = currentAgentId ?: return
         ui.launch {
-            http.post("${base()}/agents/$id/clear", "{}".toRequestBody(http.jsonType))
+            http.clear(id)
             transcripts.remove(id)
             ctxByAgent.remove(id)
             tokIn = 0; tokOut = 0
@@ -257,10 +252,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         setBusy(true)
         startTimer("compacting…")
         chatJob = ui.launch {
-            val s = http.post("${base()}/agents/$id/compact", "{}".toRequestBody(http.jsonType))
+            val ok = http.compact(id)
             stopThinking()
             setBusy(false)
-            if (s == null) { setStatus("compact failed"); return@launch }
+            if (!ok) { setStatus("compact failed"); return@launch }
             appendSpan(colored("— conversation compacted —\n\n", R.color.action_text, italic = true))
             ctxByAgent.remove(id)
             tokIn = 0; tokOut = 0
@@ -332,8 +327,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun refreshAgents() = ui.launch {
-        val s = http.get("${base()}/agents") ?: run { setStatus("no bridge at ${base()}"); return@launch }
-        setAgents(parseAgents(s))
+        val list = http.agents() ?: run { setStatus("no bridge at ${base()}"); return@launch }
+        setAgents(list)
         if (currentAgentId == null || agents.none { it.id == currentAgentId }) {
             currentAgentId = agents.firstOrNull()?.id
         }
@@ -349,11 +344,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun healthCheck() = ui.launch {
-        val ok = http.get("${base()}/health") == "ok"
+        val ok = http.health()
         setServerUp(ok)
         if (!ok) return@launch
-        val s = http.get("${base()}/agents") ?: return@launch
-        val list = parseAgents(s)
+        val list = http.agents() ?: return@launch
         val sig = list.joinToString("|") { "${it.id}:${it.branch}:${it.dirty}:${it.exists}" }
         if (sig != agentsSig) {
             agentsSig = sig
@@ -363,20 +357,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
             updateBottom()
         }
-    }
-
-    private fun parseAgents(s: String): List<Agent> {
-        val out = mutableListOf<Agent>()
-        try {
-            val arr = JSONArray(s)
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                out.add(Agent(o.getInt("id"), o.optString("name"), o.optString("dir"),
-                    if (o.isNull("branch")) null else o.optString("branch"),
-                    o.optBoolean("dirty", false), o.optBoolean("exists", true)))
-            }
-        } catch (e: Exception) { /* ignore malformed */ }
-        return out
     }
 
     private fun setAgents(list: List<Agent>) {
@@ -391,10 +371,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             .setMessage("Remove “${a.name}”? This just stops tracking it — the directory and its files are untouched.")
             .setPositiveButton("Remove") { _, _ ->
                 ui.launch {
-                    val s = http.delete("${base()}/agents/${a.id}") ?: run { setStatus("remove failed"); return@launch }
+                    val list = http.removeAgent(a.id) ?: run { setStatus("remove failed"); return@launch }
                     transcripts.remove(a.id)
                     ctxByAgent.remove(a.id)
-                    setAgents(parseAgents(s))
+                    setAgents(list)
                     agentsSig = ""
                     if (currentAgentId == a.id) {
                         currentAgentId = agents.firstOrNull()?.id
@@ -458,17 +438,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         fun load(dir: String) {
             ui.launch {
-                val s = http.get("${base()}/ls?dir=" + Uri.encode(dir)) ?: run { setStatus("cannot list folder"); return@launch }
-                val o = JSONObject(s)
-                browseDir = o.getString("dir")
+                val listing = http.listDir(dir) ?: run { setStatus("cannot list folder"); return@launch }
+                browseDir = listing.dir
                 pathView.text = browseDir
-                val parent = if (o.isNull("parent")) null else o.getString("parent")
-                val arr = o.getJSONArray("dirs")
                 val rows = ArrayList<String>()
                 val targets = ArrayList<String>()
-                if (parent != null) { rows.add("⬆  .."); targets.add(parent) }
-                for (i in 0 until arr.length()) {
-                    val n = arr.getString(i)
+                if (listing.parent != null) { rows.add("⬆  .."); targets.add(listing.parent) }
+                for (n in listing.dirs) {
                     rows.add("📁  $n")
                     targets.add(browseDir.trimEnd('/') + "/" + n)
                 }
@@ -488,20 +464,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun openSessionPicker(dir: String) {
         ui.launch {
-            val s = http.get("${base()}/sessions?dir=" + Uri.encode(dir))
+            val sessions = http.sessions(dir)
             val ids = ArrayList<String>()
             val labels = ArrayList<String>()
             labels.add("✨  New session")
-            if (s != null) {
-                try {
-                    val arr = JSONArray(s)
-                    for (i in 0 until arr.length()) {
-                        val o = arr.getJSONObject(i)
-                        ids.add(o.getString("id"))
-                        val prev = o.optString("preview").ifBlank { o.getString("id").take(8) }
-                        labels.add("⟳  $prev")
-                    }
-                } catch (e: Exception) { /* ignore */ }
+            for (s in sessions) {
+                ids.add(s.id)
+                val prev = s.preview.ifBlank { s.id.take(8) }
+                labels.add("⟳  $prev")
             }
             AlertDialog.Builder(this@MainActivity)
                 .setTitle(shortPath(dir))
@@ -515,25 +485,18 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun addAgentDir(dir: String, session: String?) {
         ui.launch {
-            val payload = JSONObject().put("dir", dir)
-            if (session != null) payload.put("session", session)
-            val s = http.post("${base()}/agents", payload.toString().toRequestBody(http.jsonType))
-            if (s == null) { setStatus("add agent failed"); return@launch }
-            setAgents(parseAgents(s))
+            val list = http.addAgent(dir, session) ?: run { setStatus("add agent failed"); return@launch }
+            setAgents(list)
             agentsSig = ""
             val id = agents.firstOrNull { it.dir == dir }?.id ?: agents.maxByOrNull { it.id }?.id
             currentAgentId = id
             if (session != null && id != null) {
-                val buf = SpannableStringBuilder()
-                transcripts[id] = buf
-                val h = http.get("${base()}/history?dir=" + Uri.encode(dir) + "&id=" + Uri.encode(session))
-                if (h != null) {
-                    try {
-                        val arr = JSONArray(h)
-                        loadingHistory = true
-                        for (i in 0 until arr.length()) renderEvent(arr.getJSONObject(i))
-                        loadingHistory = false
-                    } catch (e: Exception) { loadingHistory = false }
+                transcripts[id] = SpannableStringBuilder()
+                val events = http.history(dir, session)
+                if (events != null) {
+                    loadingHistory = true
+                    for (e in events) renderEvent(e)
+                    loadingHistory = false
                 }
             }
             updateBottom()
@@ -542,12 +505,13 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun renderEvent(o: JSONObject) {
-        when (o.optString("t")) {
-            "you" -> appendYou(o.optString("text"))
-            "action" -> appendAction(o.optString("label"))
-            "diff" -> appendDiff(o.optString("file"), o.optString("patch"))
-            "reply" -> appendReply(o.optString("text"))
+    private fun renderEvent(e: ChatEvent) {
+        when (e) {
+            is ChatEvent.You -> appendYou(e.text)
+            is ChatEvent.Action -> appendAction(e.label)
+            is ChatEvent.Diff -> appendDiff(e.file, e.patch)
+            is ChatEvent.Reply -> appendReply(e.text)
+            else -> {}
         }
     }
 
@@ -614,12 +578,12 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         if (audio.isEmpty()) { setStatus("nothing recorded"); setBusy(false); return }
         val aid = currentAgentId
         if (aid == null) { setStatus("no agent selected — swipe right to add one"); setBusy(false); return }
-        val body = wav(audio).toRequestBody("audio/wav".toMediaType())
+        val wavBytes = wav(audio)
         setBusy(true)
         setStatus("transcribing…")
         speakCue("transcribing")
         chatJob = ui.launch {
-            val said = http.post("${base()}/stt", body)
+            val said = http.stt(wavBytes)
             if (said.isNullOrBlank()) { setStatus("speech-to-text failed"); setBusy(false); return@launch }
             appendYou(said)
             startThinking()
@@ -630,43 +594,39 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private suspend fun streamChat(aid: Int, text: String) {
         val narrate = cvPrefs().getBoolean("narrate_$aid", false)
-        val payload = JSONObject().put("text", text).put("agent", aid).put("narrate", narrate).toString().toRequestBody(http.jsonType)
         var sawReply = false
-        val ok = http.stream("${base()}/chat", payload) { line ->
-            val o = try { JSONObject(line) } catch (e: Exception) { return@stream }
-            if (o.optString("t") == "reply") sawReply = true
-            withContext(Dispatchers.Main) { handleEvent(o) }
+        val ok = http.chat(text, aid, narrate) { event ->
+            if (event is ChatEvent.Reply) sawReply = true
+            withContext(Dispatchers.Main) { handleEvent(event) }
         }
         if ((!ok || !sawReply) && busy) { stopThinking(); setStatus("agent failed"); setBusy(false) }
     }
 
-    private fun handleEvent(o: JSONObject) {
-        when (o.optString("t")) {
-            "action" -> appendAction(o.optString("label"))
-            "diff" -> appendDiff(o.optString("file"), o.optString("patch"))
-            "working" -> {
-                val t = o.optString("text")
-                appendAction(t)
-                if (speakStatusOn()) tts.speak(t, TextToSpeech.QUEUE_ADD, null, "working")
+    private fun handleEvent(e: ChatEvent) {
+        when (e) {
+            is ChatEvent.Action -> appendAction(e.label)
+            is ChatEvent.Diff -> appendDiff(e.file, e.patch)
+            is ChatEvent.Working -> {
+                appendAction(e.text)
+                if (speakStatusOn()) tts.speak(e.text, TextToSpeech.QUEUE_ADD, null, "working")
             }
-            "usage" -> {
-                tokIn = o.optInt("in", tokIn)
-                tokOut = o.optInt("out", tokOut)
+            is ChatEvent.Usage -> {
+                e.tokIn?.let { tokIn = it }
+                e.tokOut?.let { tokOut = it }
                 val id = currentAgentId ?: -1
-                val max = o.optInt("max", ctxByAgent[id]?.second ?: 0)
+                val max = e.max ?: (ctxByAgent[id]?.second ?: 0)
                 ctxByAgent[id] = Pair(tokIn, max)
                 updateStatusLine()
                 updateBottom()
             }
-            "reply" -> {
+            is ChatEvent.Reply -> {
                 stopThinking()
-                val text = o.optString("text")
-                appendReply(text)
+                appendReply(e.text)
                 setStatus("speaking…")
-                val narration = o.optString("speech", "")
-                val speech = if (narration.isNotBlank()) narration else forSpeech(text)
+                val speech = if (e.speech.isNotBlank()) e.speech else forSpeech(e.text)
                 if (usePiper()) speakPiper(speech) else tts.speak(speech, TextToSpeech.QUEUE_FLUSH, null, "reply")
             }
+            else -> {}
         }
     }
 
@@ -702,11 +662,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return out
     }
 
-    private suspend fun ttsBytes(text: String): ByteArray? {
-        val o = JSONObject().put("text", text)
-        piperVoice()?.let { o.put("voice", it) }
-        return http.postBytes("${base()}/tts", o.toString().toRequestBody(http.jsonType))
-    }
+    private suspend fun ttsBytes(text: String): ByteArray? = http.tts(text, piperVoice())
 
     private suspend fun playWavAwait(wav: ByteArray) = suspendCancellableCoroutine<Unit> { cont ->
         try {

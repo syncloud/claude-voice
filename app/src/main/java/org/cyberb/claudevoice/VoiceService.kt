@@ -26,17 +26,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class VoiceService : Service(), TextToSpeech.OnInitListener {
@@ -54,9 +46,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS).callTimeout(0, TimeUnit.SECONDS).readTimeout(0, TimeUnit.SECONDS).build()
-    private val jsonType = "application/json".toMediaType()
+    private val http = BridgeHttp({ base() }, timeoutSeconds = 0)
     private val sampleRate = 16000
     private val recording = AtomicBoolean(false)
     private var recordThread: Thread? = null
@@ -67,7 +57,6 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
     private var mediaSession: MediaSession? = null
     private var silent: MediaPlayer? = null
     private var turnJob: Job? = null
-    @Volatile private var currentCall: okhttp3.Call? = null
 
     private fun trigger() = prefs().getString("trigger", "accessibility") ?: "accessibility"
 
@@ -86,7 +75,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
         try { recordThread?.join() } catch (e: Exception) { }
         pcm.reset()
         releaseBt()
-        currentCall?.cancel()
+        http.cancel()
         turnJob?.cancel()
         tts?.stop()
         try { player?.stop() } catch (e: Exception) { }
@@ -266,30 +255,14 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
         tts?.speak("thinking", TextToSpeech.QUEUE_FLUSH, null, "cue")
         handler.postDelayed(heartbeat, 60000)
         turnJob = scope.launch {
-            val said = post("${base()}/stt", wav(audio).toRequestBody("audio/wav".toMediaType()))
+            val said = http.stt(wav(audio))
             if (said.isNullOrBlank()) { handler.removeCallbacks(heartbeat); notify("speech-to-text failed"); return@launch }
             broadcast("you", said)
             val narrate = prefs().getBoolean("narrate_$aid", false)
-            val payload = JSONObject().put("text", said).put("agent", aid).put("narrate", narrate).toString().toRequestBody(jsonType)
             var replyText = ""
             var speech = ""
-            withContext(Dispatchers.IO) {
-                val call = http.newCall(Request.Builder().url("${base()}/chat").post(payload).build())
-                currentCall = call
-                try {
-                    call.execute().use { r ->
-                        val src = r.body?.source() ?: return@use
-                        while (!src.exhausted()) {
-                            val line = src.readUtf8Line() ?: break
-                            if (line.isBlank()) continue
-                            val o = try { JSONObject(line) } catch (e: Exception) { continue }
-                            if (o.optString("t") == "reply") {
-                                replyText = o.optString("text")
-                                speech = o.optString("speech", "")
-                            }
-                        }
-                    }
-                } catch (e: Exception) { /* dropped */ } finally { currentCall = null }
+            http.chat(said, aid, narrate) { ev ->
+                if (ev is ChatEvent.Reply) { replyText = ev.text; speech = ev.speech }
             }
             handler.removeCallbacks(heartbeat)
             val toSpeak = if (speech.isNotBlank()) speech else clean(replyText)
@@ -303,9 +276,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
     private fun speakOut(text: String) {
         if (usePiper()) {
             scope.launch {
-                val o = JSONObject().put("text", text)
-                piperVoice()?.let { o.put("voice", it) }
-                val wav = postBytes("${base()}/tts", o.toString().toRequestBody(jsonType))
+                val wav = http.tts(text, piperVoice())
                 if (wav != null && wav.isNotEmpty()) { playWav(wav); return@launch }
                 tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
                 notify("ready")
@@ -327,22 +298,6 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
                 prepare(); start()
             }
         } catch (e: Exception) { notify("ready") }
-    }
-
-    private suspend fun post(url: String, body: RequestBody): String? = withContext(Dispatchers.IO) {
-        try {
-            http.newCall(Request.Builder().url(url).post(body).build()).execute().use { r ->
-                if (r.isSuccessful) r.body?.string()?.trim() else null
-            }
-        } catch (e: Exception) { null }
-    }
-
-    private suspend fun postBytes(url: String, body: RequestBody): ByteArray? = withContext(Dispatchers.IO) {
-        try {
-            http.newCall(Request.Builder().url(url).post(body).build()).execute().use { r ->
-                if (r.isSuccessful) r.body?.bytes() else null
-            }
-        } catch (e: Exception) { null }
     }
 
     private fun clean(t: String): String {

@@ -22,17 +22,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.json.JSONArray
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 class SettingsActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private val ui = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val http = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build()
+    private val http = BridgeHttp({ base() }, timeoutSeconds = 20)
     private lateinit var tts: TextToSpeech
 
     private lateinit var bridgeUrl: EditText
@@ -139,10 +134,7 @@ class SettingsActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     private fun loadPiperVoices() {
         ui.launch {
-            val s = httpGet("${base()}/voices") ?: return@launch
-            piperNames = try {
-                val a = JSONArray(s); (0 until a.length()).map { a.getString(it) }
-            } catch (e: Exception) { emptyList() }
+            piperNames = http.voices()
             if (piperNames.isEmpty()) return@launch
             voiceSpinner.adapter = ArrayAdapter(this@SettingsActivity, android.R.layout.simple_spinner_dropdown_item, piperNames)
             val saved = prefs().getString("voice", null)
@@ -154,14 +146,6 @@ class SettingsActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 override fun onNothingSelected(p: AdapterView<*>?) {}
             }
         }
-    }
-
-    private suspend fun httpGet(url: String): String? = withContext(Dispatchers.IO) {
-        try {
-            http.newCall(Request.Builder().url(url).get().build()).execute().use { r ->
-                if (r.isSuccessful) r.body?.string()?.trim() else null
-            }
-        } catch (e: Exception) { null }
     }
 
     private fun saveBridge() {
