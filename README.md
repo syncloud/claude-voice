@@ -5,6 +5,16 @@ talk, watch the transcript, hear the reply spoken back. The agent itself is the
 `claude` CLI running in Termux on the same device — so it has your repos and
 tools — and the app is a thin voice front-end that reaches it over localhost.
 
+<p align="center">
+  <img src="docs/chat.jpg" alt="Main view: status bar with live context usage, the spoken request, and the agent streaming actions and a code diff back" width="300" />
+  &nbsp;&nbsp;
+  <img src="docs/agents.jpg" alt="Agent drawer: one agent per directory, each with its own narrate toggle and live bridge status" width="300" />
+</p>
+
+<p align="center">
+  <em>Left: hold-to-talk, watch the agent stream edits, hear the reply. Right: switch between agents, one per repo.</em>
+</p>
+
 ```
             ┌──────────────────── one phone ────────────────────┐
   Android app (this repo)                Termux (bridge/)
