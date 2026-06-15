@@ -271,10 +271,11 @@ class MainView(private val host: VoiceHost, root: View) {
         if (aid == null) { setStatus("no agent selected — swipe right to add one"); setBusy(false); return }
         setBusy(true)
         setStatus("transcribing…")
+        audio.beginTurn()
         audio.speakCue("transcribing")
         chatJob = ui.launch {
             val said = http.stt(wavBytes)
-            if (said.isNullOrBlank()) { setStatus("speech-to-text failed"); setBusy(false); return@launch }
+            if (said.isNullOrBlank()) { audio.endTurn(); setStatus("speech-to-text failed"); setBusy(false); return@launch }
             appendYou(said)
             startThinking()
             audio.speakCue("thinking")
@@ -289,7 +290,7 @@ class MainView(private val host: VoiceHost, root: View) {
             if (event is ChatEvent.Reply) sawReply = true
             withContext(Dispatchers.Main) { handleEvent(event) }
         }
-        if ((!ok || !sawReply) && busy) { stopThinking(); setStatus("agent failed"); setBusy(false) }
+        if ((!ok || !sawReply) && busy) { audio.endTurn(); stopThinking(); setStatus("agent failed"); setBusy(false) }
     }
 
     private fun handleEvent(e: ChatEvent) {

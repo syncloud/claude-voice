@@ -13,6 +13,7 @@ import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.content.ContextCompat
@@ -50,6 +51,17 @@ class AudioEngine(
     private var toneGen: ToneGenerator? = null
     private var speakJob: Job? = null
 
+    private val wakeLock = (activity.getSystemService(Context.POWER_SERVICE) as PowerManager)
+        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "claudevoice:speak")
+        .apply { setReferenceCounted(false) }
+
+    private fun holdWake() { try { wakeLock.acquire(16 * 60 * 1000L) } catch (e: Exception) { } }
+    private fun releaseWake() { try { if (wakeLock.isHeld) wakeLock.release() } catch (e: Exception) { } }
+    private fun ready() { releaseWake(); onReady() }
+
+    fun beginTurn() = holdWake()
+    fun endTurn() = releaseWake()
+
     private val audioManager = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val audioCb = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) { onDevicesChanged() }
@@ -65,8 +77,8 @@ class AudioEngine(
         tts.language = Locale.US
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {}
-            override fun onDone(utteranceId: String?) { if (utteranceId == "reply") activity.runOnUiThread { onReady() } }
-            @Deprecated("deprecated") override fun onError(utteranceId: String?) { activity.runOnUiThread { onReady() } }
+            override fun onDone(utteranceId: String?) { if (utteranceId == "reply") activity.runOnUiThread { ready() } }
+            @Deprecated("deprecated") override fun onError(utteranceId: String?) { activity.runOnUiThread { ready() } }
         })
         activity.runOnUiThread { applyVoice() }
     }
@@ -88,10 +100,12 @@ class AudioEngine(
     }
 
     fun speakWorking(text: String) {
+        holdWake()
         if (speakStatusOn()) tts.speak(text, TextToSpeech.QUEUE_ADD, null, "working")
     }
 
     fun speakReply(replyText: String, narration: String) {
+        holdWake()
         val spoken = if (narration.isNotBlank()) narration else forSpeech(replyText)
         if (usePiper()) speakPiper(spoken) else tts.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, "reply")
     }
@@ -100,11 +114,12 @@ class AudioEngine(
         tts.stop()
         speakJob?.cancel()
         stopPlayer()
+        releaseWake()
     }
 
     private fun speakPiper(fullText: String) {
         val sentences = splitSentences(fullText)
-        if (sentences.isEmpty()) { onReady(); return }
+        if (sentences.isEmpty()) { ready(); return }
         speakJob = ui.launch {
             var next = async(Dispatchers.IO) { ttsBytes(sentences[0]) }
             for (i in sentences.indices) {
@@ -116,7 +131,7 @@ class AudioEngine(
                 }
                 playWavAwait(wav)
             }
-            onReady()
+            ready()
         }
     }
 
@@ -198,6 +213,7 @@ class AudioEngine(
             stopPlayer()
             val mp = MediaPlayer()
             player = mp
+            mp.setWakeMode(activity, PowerManager.PARTIAL_WAKE_LOCK)
             mp.setDataSource(f.absolutePath)
             mp.setOnCompletionListener {
                 it.release(); if (player === it) player = null
@@ -299,6 +315,7 @@ class AudioEngine(
     fun destroy() {
         recording.set(false)
         stopPlayer()
+        releaseWake()
         toneGen?.release()
         audioManager.unregisterAudioDeviceCallback(audioCb)
         tts.shutdown()

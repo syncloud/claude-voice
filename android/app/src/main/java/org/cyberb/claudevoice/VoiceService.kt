@@ -20,7 +20,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,6 +59,10 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
     private var mediaSession: MediaSession? = null
     private var silent: MediaPlayer? = null
     private var turnJob: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    private fun holdWake() { try { wakeLock?.acquire(16 * 60 * 1000L) } catch (e: Exception) { } }
+    private fun releaseWake() { try { val w = wakeLock; if (w != null && w.isHeld) w.release() } catch (e: Exception) { } }
 
     private fun trigger() = prefs().getString("trigger", "accessibility") ?: "accessibility"
 
@@ -80,6 +86,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
         tts?.stop()
         try { player?.stop() } catch (e: Exception) { }
         player?.release(); player = null
+        releaseWake()
         beep(ToneGenerator.TONE_PROP_NACK)
         notify("cancelled")
     }
@@ -155,11 +162,20 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
     override fun onCreate() {
         super.onCreate()
         createChannel()
+        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "claudevoice:turn")
+            .apply { setReferenceCounted(false) }
         tts = TextToSpeech(this, this)
     }
 
     override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) tts?.language = Locale.US
+        if (status != TextToSpeech.SUCCESS) return
+        tts?.language = Locale.US
+        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onDone(utteranceId: String?) { if (utteranceId == "reply") { releaseWake(); notify("ready") } }
+            @Deprecated("deprecated") override fun onError(utteranceId: String?) { if (utteranceId == "reply") { releaseWake(); notify("ready") } }
+        })
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -181,6 +197,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
     private val beginRunnable = Runnable { starting.set(false); beginRecord(true) }
     private val heartbeat = object : Runnable {
         override fun run() {
+            holdWake()
             if (prefs().getBoolean("speakStatus", true)) tts?.speak("still working", TextToSpeech.QUEUE_ADD, null, "cue")
             handler.postDelayed(this, 60000)
         }
@@ -252,11 +269,12 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
         val aid = agent()
         if (aid < 0) { notify("no agent — open the app"); return }
         notify("thinking…")
+        holdWake()
         tts?.speak("thinking", TextToSpeech.QUEUE_FLUSH, null, "cue")
         handler.postDelayed(heartbeat, 60000)
         turnJob = scope.launch {
             val said = http.stt(wav(audio))
-            if (said.isNullOrBlank()) { handler.removeCallbacks(heartbeat); notify("speech-to-text failed"); return@launch }
+            if (said.isNullOrBlank()) { handler.removeCallbacks(heartbeat); releaseWake(); notify("speech-to-text failed"); return@launch }
             broadcast("you", said)
             val narrate = prefs().getBoolean("narrate_$aid", false)
             var replyText = ""
@@ -267,7 +285,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
             }
             handler.removeCallbacks(heartbeat)
             val toSpeak = if (speech.isNotBlank()) speech else clean(replyText)
-            if (toSpeak.isBlank()) { notify("no response"); return@launch }
+            if (toSpeak.isBlank()) { releaseWake(); notify("no response"); return@launch }
             broadcast("reply", if (replyText.isNotBlank()) replyText else toSpeak)
             notify("speaking…")
             speakOut(toSpeak)
@@ -280,11 +298,9 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
                 val wav = http.tts(text, piperVoice())
                 if (wav != null && wav.isNotEmpty()) { playWav(wav); return@launch }
                 tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
-                notify("ready")
             }
         } else {
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "reply")
-            notify("ready")
         }
     }
 
@@ -295,10 +311,11 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
             player?.release()
             player = MediaPlayer().apply {
                 setDataSource(f.absolutePath)
-                setOnCompletionListener { it.release(); if (player === it) player = null; notify("ready") }
+                setWakeMode(this@VoiceService, PowerManager.PARTIAL_WAKE_LOCK)
+                setOnCompletionListener { it.release(); if (player === it) player = null; releaseWake(); notify("ready") }
                 prepare(); start()
             }
-        } catch (e: Exception) { notify("ready") }
+        } catch (e: Exception) { releaseWake(); notify("ready") }
     }
 
     private fun clean(t: String): String {
@@ -376,6 +393,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
         super.onDestroy()
         recording.set(false)
         teardownTrigger()
+        releaseWake()
         player?.release(); player = null
         toneGen?.release()
         tts?.shutdown()
