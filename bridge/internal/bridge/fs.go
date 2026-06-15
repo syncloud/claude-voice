@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/cyberb/claude-voice/bridge/internal/bridge/models"
 )
 
 // FS is the bridge's gateway to the local filesystem. It owns every disk
@@ -92,10 +94,10 @@ func (f *FS) ResolveVoice(name string) string {
 }
 
 // ListDir returns the sorted subdirectories of dir plus its parent.
-func (f *FS) ListDir(dir string) (dirListing, error) {
+func (f *FS) ListDir(dir string) (models.DirListing, error) {
 	entries, err := f.ReadDir(dir)
 	if err != nil {
-		return dirListing{}, err
+		return models.DirListing{}, err
 	}
 	dirs := []string{}
 	for _, e := range entries {
@@ -108,17 +110,17 @@ func (f *FS) ListDir(dir string) (dirListing, error) {
 	if p := filepath.Dir(dir); p != dir {
 		parent = &p
 	}
-	return dirListing{Dir: dir, Parent: parent, Dirs: dirs}, nil
+	return models.DirListing{Dir: dir, Parent: parent, Dirs: dirs}, nil
 }
 
 // ListSessions returns the most recent claude sessions recorded for dir.
-func (f *FS) ListSessions(dir string) []sessionInfo {
+func (f *FS) ListSessions(dir string) []models.SessionInfo {
 	proj := filepath.Join(f.home, ".claude", "projects", encodeDir(dir))
 	entries, err := f.ReadDir(proj)
 	if err != nil {
-		return []sessionInfo{}
+		return []models.SessionInfo{}
 	}
-	out := []sessionInfo{}
+	out := []models.SessionInfo{}
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
@@ -127,7 +129,7 @@ func (f *FS) ListSessions(dir string) []sessionInfo {
 		if err != nil {
 			continue
 		}
-		out = append(out, sessionInfo{
+		out = append(out, models.SessionInfo{
 			ID:      strings.TrimSuffix(e.Name(), ".jsonl"),
 			Preview: f.sessionPreview(filepath.Join(proj, e.Name())),
 			Mtime:   info.ModTime().Unix(),
@@ -149,14 +151,14 @@ func (f *FS) sessionPreview(path string) string {
 	sc := bufio.NewScanner(fh)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for sc.Scan() {
-		var ev streamEvent
+		var ev models.StreamEvent
 		if json.Unmarshal(sc.Bytes(), &ev) != nil || ev.Type != "user" {
 			continue
 		}
-		if s := ev.Message.textContent(); strings.TrimSpace(s) != "" {
+		if s := ev.Message.TextContent(); strings.TrimSpace(s) != "" {
 			return trunc(s, 70)
 		}
-		for _, b := range ev.Message.blocks() {
+		for _, b := range ev.Message.Blocks() {
 			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
 				return trunc(b.Text, 70)
 			}
@@ -166,34 +168,34 @@ func (f *FS) sessionPreview(path string) string {
 }
 
 // History returns the transcript events recorded for session id under dir.
-func (f *FS) History(dir, id string) []Event {
+func (f *FS) History(dir, id string) []models.Event {
 	path := filepath.Join(f.home, ".claude", "projects", encodeDir(dir), id+".jsonl")
 	fh, err := f.Open(path)
 	if err != nil {
-		return []Event{}
+		return []models.Event{}
 	}
 	defer fh.Close()
-	out := []Event{}
+	out := []models.Event{}
 	sc := bufio.NewScanner(fh)
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for sc.Scan() {
-		var ev streamEvent
+		var ev models.StreamEvent
 		if json.Unmarshal(sc.Bytes(), &ev) != nil {
 			continue
 		}
 		switch ev.Type {
 		case "user":
-			if s := ev.Message.textContent(); strings.TrimSpace(s) != "" {
-				out = append(out, Event{T: "you", Text: s})
+			if s := ev.Message.TextContent(); strings.TrimSpace(s) != "" {
+				out = append(out, models.Event{T: "you", Text: s})
 				continue
 			}
-			for _, b := range ev.Message.blocks() {
+			for _, b := range ev.Message.Blocks() {
 				if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
-					out = append(out, Event{T: "you", Text: b.Text})
+					out = append(out, models.Event{T: "you", Text: b.Text})
 				}
 			}
 		case "assistant":
-			for _, b := range ev.Message.blocks() {
+			for _, b := range ev.Message.Blocks() {
 				switch b.Type {
 				case "text":
 					t := b.Text
@@ -204,12 +206,12 @@ func (f *FS) History(dir, id string) []Event {
 						t = strings.TrimSpace(t[:idx])
 					}
 					if t != "" {
-						out = append(out, Event{T: "reply", Text: t})
+						out = append(out, models.Event{T: "reply", Text: t})
 					}
 				case "tool_use":
-					out = append(out, Event{T: "action", Label: toolLabel(b.Name, b.Input)})
+					out = append(out, models.Event{T: "action", Label: toolLabel(b.Name, b.Input)})
 					if patch, file, ok := diffPatch(b.Name, b.Input); ok {
-						out = append(out, Event{T: "diff", File: file, Patch: patch})
+						out = append(out, models.Event{T: "diff", File: file, Patch: patch})
 					}
 				}
 			}

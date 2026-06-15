@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/cyberb/claude-voice/bridge/internal/bridge/models"
 )
 
 // Server adapts the pure Handlers business logic to HTTP routes. All knowledge
@@ -89,7 +91,7 @@ func (s *Server) tts(w http.ResponseWriter, r *http.Request) {
 		writeText(w, 501, "piper not configured")
 		return
 	}
-	var p ttsReq
+	var p models.TtsReq
 	json.NewDecoder(r.Body).Decode(&p)
 	if strings.TrimSpace(p.Text) == "" {
 		writeText(w, 400, "empty text")
@@ -111,7 +113,7 @@ func (s *Server) agents(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		writeJSON(w, 200, s.h.agentList())
 	case http.MethodPost:
-		var p agentReq
+		var p models.AgentReq
 		json.NewDecoder(r.Body).Decode(&p)
 		if strings.TrimSpace(p.Dir) == "" {
 			writeText(w, 400, "missing dir")
@@ -140,7 +142,7 @@ func (s *Server) agentByID(w http.ResponseWriter, r *http.Request) {
 			writeText(w, 500, "compact failed")
 			return
 		}
-		writeJSON(w, 200, compactResp{Summary: summary})
+		writeJSON(w, 200, models.CompactResp{Summary: summary})
 		return
 	}
 	if strings.HasSuffix(rest, "/clear") {
@@ -222,11 +224,11 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		writeText(w, 405, "method not allowed")
 		return
 	}
-	var p chatReq
+	var p models.ChatReq
 	json.NewDecoder(r.Body).Decode(&p)
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	flusher, _ := w.(http.Flusher)
-	s.h.RunChat(p, func(e Event) {
+	s.h.RunChat(p, func(e models.Event) {
 		w.Write(mustJSON(e))
 		w.Write([]byte("\n"))
 		if flusher != nil {

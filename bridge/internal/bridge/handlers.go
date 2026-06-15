@@ -12,7 +12,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cyberb/claude-voice/bridge/internal/bridge/models"
 )
+
+func intp(v int) *int { return &v }
 
 const narrateMarker = "===SPOKEN==="
 
@@ -93,7 +97,7 @@ func gitinfo(dir string) (string, bool) {
 	return branch, len(strings.TrimSpace(string(s))) > 0
 }
 
-func (h *Handlers) agentList() []agentInfo {
+func (h *Handlers) agentList() []models.AgentInfo {
 	h.mu.Lock()
 	dirs := map[int]string{}
 	ids := make([]int, 0, len(h.agents))
@@ -103,7 +107,7 @@ func (h *Handlers) agentList() []agentInfo {
 	}
 	h.mu.Unlock()
 	sort.Ints(ids)
-	out := []agentInfo{}
+	out := []models.AgentInfo{}
 	for _, id := range ids {
 		dir := dirs[id]
 		branch, dirty := gitinfo(dir)
@@ -116,7 +120,7 @@ func (h *Handlers) agentList() []agentInfo {
 		if name == "" || name == string(filepath.Separator) {
 			name = dir
 		}
-		out = append(out, agentInfo{ID: id, Dir: dir, Name: name, Branch: bp, Dirty: dirty, Exists: h.fs.Exists(dir)})
+		out = append(out, models.AgentInfo{ID: id, Dir: dir, Name: name, Branch: bp, Dirty: dirty, Exists: h.fs.Exists(dir)})
 	}
 	return out
 }
@@ -152,7 +156,7 @@ func trunc(s string, n int) string {
 	return s
 }
 
-func toolLabel(name string, in toolInput) string {
+func toolLabel(name string, in models.ToolInput) string {
 	switch name {
 	case "Bash":
 		return "Bash: " + trunc(in.Command, 100)
@@ -173,7 +177,7 @@ func toolLabel(name string, in toolInput) string {
 	}
 }
 
-func diffPatch(name string, in toolInput) (string, string, bool) {
+func diffPatch(name string, in models.ToolInput) (string, string, bool) {
 	file := filepath.Base(in.FilePath)
 	minus := func(t string) string {
 		var b strings.Builder
@@ -213,22 +217,22 @@ func diffPatch(name string, in toolInput) (string, string, bool) {
 
 // transformEvent turns one parsed claude stream-json event into the typed
 // events the app consumes.
-func transformEvent(ev streamEvent) []Event {
-	out := []Event{}
+func transformEvent(ev models.StreamEvent) []models.Event {
+	out := []models.Event{}
 	switch ev.Type {
 	case "assistant":
-		for _, b := range ev.Message.blocks() {
+		for _, b := range ev.Message.Blocks() {
 			if b.Type != "tool_use" {
 				continue
 			}
-			out = append(out, Event{T: "action", Label: toolLabel(b.Name, b.Input)})
+			out = append(out, models.Event{T: "action", Label: toolLabel(b.Name, b.Input)})
 			if patch, file, ok := diffPatch(b.Name, b.Input); ok {
-				out = append(out, Event{T: "diff", File: file, Patch: patch})
+				out = append(out, models.Event{T: "diff", File: file, Patch: patch})
 			}
 		}
 		if ev.Message != nil && ev.Message.Usage != nil {
-			ti, to := ev.Message.Usage.inOut()
-			out = append(out, Event{T: "usage", In: intp(ti), Out: intp(to)})
+			ti, to := ev.Message.Usage.InOut()
+			out = append(out, models.Event{T: "usage", In: intp(ti), Out: intp(to)})
 		}
 	case "result":
 		maxCtx := 0
@@ -238,15 +242,15 @@ func transformEvent(ev streamEvent) []Event {
 			}
 		}
 		if ev.Usage != nil {
-			ti, to := ev.Usage.inOut()
-			out = append(out, Event{T: "usage", In: intp(ti), Out: intp(to), Max: intp(maxCtx)})
+			ti, to := ev.Usage.InOut()
+			out = append(out, models.Event{T: "usage", In: intp(ti), Out: intp(to), Max: intp(maxCtx)})
 		}
 		display, speech := ev.Result, ""
 		if idx := strings.Index(ev.Result, narrateMarker); idx >= 0 {
 			display = strings.TrimSpace(ev.Result[:idx])
 			speech = strings.TrimSpace(ev.Result[idx+len(narrateMarker):])
 		}
-		out = append(out, Event{T: "reply", Text: display, Speech: speech})
+		out = append(out, models.Event{T: "reply", Text: display, Speech: speech})
 	}
 	return out
 }
@@ -285,7 +289,7 @@ func (h *Handlers) runClaudeSession(dir, resume, text string) (string, string, e
 	if err != nil {
 		return "", "", err
 	}
-	var res claudeResult
+	var res models.ClaudeResult
 	if json.Unmarshal(out, &res) != nil {
 		return strings.TrimSpace(string(out)), "", nil
 	}
@@ -324,7 +328,7 @@ func (h *Handlers) compactAgent(id int) (string, bool) {
 // RunChat runs a claude streaming turn for the request and delivers each typed
 // event to emit. It blocks until the turn completes and persists the resulting
 // session id. emit must be safe to call from this goroutine only.
-func (h *Handlers) RunChat(p chatReq, emit func(Event)) {
+func (h *Handlers) RunChat(p models.ChatReq, emit func(models.Event)) {
 	id := 0
 	if p.Agent != nil {
 		id = *p.Agent
@@ -340,7 +344,7 @@ func (h *Handlers) RunChat(p chatReq, emit func(Event)) {
 	h.mu.Unlock()
 
 	if a == nil || strings.TrimSpace(p.Text) == "" {
-		emit(Event{T: "reply", Text: "Unknown agent."})
+		emit(models.Event{T: "reply", Text: "Unknown agent."})
 		return
 	}
 
@@ -365,7 +369,7 @@ func (h *Handlers) RunChat(p chatReq, emit func(Event)) {
 	cmd.Dir = dir
 	stdout, err := cmd.StdoutPipe()
 	if err != nil || cmd.Start() != nil {
-		emit(Event{T: "reply", Text: "Failed to start agent."})
+		emit(models.Event{T: "reply", Text: "Failed to start agent."})
 		return
 	}
 	sc := bufio.NewScanner(stdout)
@@ -393,7 +397,7 @@ func (h *Handlers) RunChat(p chatReq, emit func(Event)) {
 				scanning = false
 				break
 			}
-			var ev streamEvent
+			var ev models.StreamEvent
 			if json.Unmarshal(line, &ev) != nil {
 				continue
 			}
@@ -407,7 +411,7 @@ func (h *Handlers) RunChat(p chatReq, emit func(Event)) {
 				}
 				if name != "" {
 					sentModel = true
-					emit(Event{T: "model", Name: name})
+					emit(models.Event{T: "model", Name: name})
 				}
 			}
 			for _, e := range transformEvent(ev) {
@@ -417,15 +421,15 @@ func (h *Handlers) RunChat(p chatReq, emit func(Event)) {
 				emit(e)
 			}
 		case <-heartbeat.C:
-			emit(Event{T: "working", Text: working[hbn%len(working)]})
+			emit(models.Event{T: "working", Text: working[hbn%len(working)]})
 			hbn++
 		}
 	}
 	cmd.Wait()
 	if ctx.Err() == context.DeadlineExceeded {
-		emit(Event{T: "reply", Text: fmt.Sprintf("The agent took longer than %d seconds, so I stopped it. Try a smaller step.", h.cfg.Timeout)})
+		emit(models.Event{T: "reply", Text: fmt.Sprintf("The agent took longer than %d seconds, so I stopped it. Try a smaller step.", h.cfg.Timeout)})
 	} else if !sawReply {
-		emit(Event{T: "reply", Text: "No response."})
+		emit(models.Event{T: "reply", Text: "No response."})
 	}
 	h.mu.Lock()
 	if h.agents[id] != nil && newSession != "" {
