@@ -11,24 +11,28 @@ import (
 	"github.com/cyberb/claude-voice/bridge/internal/bridge/models"
 )
 
-// Server adapts the pure Handlers business logic to HTTP routes. All knowledge
-// of net/http — request parsing, status codes, response encoding — lives here.
+// Server adapts the bridge's components to HTTP routes. All knowledge of
+// net/http — request parsing, status codes, response encoding — lives here; the
+// injected components hold the business logic and deal only in normal types.
 type Server struct {
-	addr string
-	h    *Handlers
-	fs   *FS
+	addr    string
+	agents  *Agents
+	claude  *Claude
+	whisper *Whisper
+	piper   *Piper
+	fs      *FS
 }
 
-// NewServer injects the Handlers and FS implementations behind the routes.
-func NewServer(addr string, h *Handlers, fs *FS) *Server {
-	return &Server{addr: addr, h: h, fs: fs}
+// NewServer injects every component behind the routes.
+func NewServer(addr string, agents *Agents, claude *Claude, whisper *Whisper, piper *Piper, fs *FS) *Server {
+	return &Server{addr: addr, agents: agents, claude: claude, whisper: whisper, piper: piper, fs: fs}
 }
 
 // Handler builds the route table mapping each path to a Server method.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.health)
-	mux.HandleFunc("/agents", s.agents)
+	mux.HandleFunc("/agents", s.handleAgents)
 	mux.HandleFunc("/agents/", s.agentByID)
 	mux.HandleFunc("/ls", s.ls)
 	mux.HandleFunc("/sessions", s.sessions)
@@ -75,11 +79,11 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) voices(w http.ResponseWriter, r *http.Request) {
-	if !s.fs.PiperEnabled() {
+	if !s.piper.Enabled() {
 		writeJSON(w, 200, []string{})
 		return
 	}
-	writeJSON(w, 200, s.fs.ListVoices())
+	writeJSON(w, 200, s.piper.Voices())
 }
 
 func (s *Server) tts(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +91,7 @@ func (s *Server) tts(w http.ResponseWriter, r *http.Request) {
 		writeText(w, 405, "method not allowed")
 		return
 	}
-	if !s.fs.PiperEnabled() {
+	if !s.piper.Enabled() {
 		writeText(w, 501, "piper not configured")
 		return
 	}
@@ -97,7 +101,7 @@ func (s *Server) tts(w http.ResponseWriter, r *http.Request) {
 		writeText(w, 400, "empty text")
 		return
 	}
-	wav, err := s.h.synth(p.Text, p.Voice)
+	wav, err := s.piper.Synth(p.Text, p.Voice)
 	if err != nil {
 		writeText(w, 500, "tts failed")
 		return
@@ -108,10 +112,10 @@ func (s *Server) tts(w http.ResponseWriter, r *http.Request) {
 	w.Write(wav)
 }
 
-func (s *Server) agents(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, 200, s.h.agentList())
+		writeJSON(w, 200, s.agents.List())
 	case http.MethodPost:
 		var p models.AgentReq
 		json.NewDecoder(r.Body).Decode(&p)
@@ -119,11 +123,11 @@ func (s *Server) agents(w http.ResponseWriter, r *http.Request) {
 			writeText(w, 400, "missing dir")
 			return
 		}
-		aid := s.h.AddAgent(p.Dir)
+		aid := s.agents.Add(p.Dir)
 		if p.Session != "" {
-			s.h.SetSession(aid, p.Session)
+			s.agents.SetSession(aid, p.Session)
 		}
-		writeJSON(w, 200, s.h.agentList())
+		writeJSON(w, 200, s.agents.List())
 	default:
 		writeText(w, 405, "method not allowed")
 	}
@@ -137,7 +141,7 @@ func (s *Server) agentByID(w http.ResponseWriter, r *http.Request) {
 			writeText(w, 400, "bad id")
 			return
 		}
-		summary, ok := s.h.compactAgent(id)
+		summary, ok := s.claude.Compact(id)
 		if !ok {
 			writeText(w, 500, "compact failed")
 			return
@@ -151,7 +155,7 @@ func (s *Server) agentByID(w http.ResponseWriter, r *http.Request) {
 			writeText(w, 400, "bad id")
 			return
 		}
-		s.h.SetSession(id, "")
+		s.agents.SetSession(id, "")
 		writeText(w, 200, "ok")
 		return
 	}
@@ -164,8 +168,8 @@ func (s *Server) agentByID(w http.ResponseWriter, r *http.Request) {
 		writeText(w, 400, "bad id")
 		return
 	}
-	s.h.DeleteAgent(id)
-	writeJSON(w, 200, s.h.agentList())
+	s.agents.Delete(id)
+	writeJSON(w, 200, s.agents.List())
 }
 
 func (s *Server) stt(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +178,7 @@ func (s *Server) stt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := io.ReadAll(r.Body)
-	writeText(w, 200, s.h.transcribe(body))
+	writeText(w, 200, s.whisper.Transcribe(body))
 }
 
 func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +232,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&p)
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	flusher, _ := w.(http.Flusher)
-	s.h.RunChat(p, func(e models.Event) {
+	s.claude.Chat(p, func(e models.Event) {
 		w.Write(mustJSON(e))
 		w.Write([]byte("\n"))
 		if flusher != nil {

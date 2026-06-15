@@ -13,24 +13,15 @@ import (
 
 // FS is the bridge's gateway to the local filesystem. It owns every disk
 // operation the bridge performs — from low-level reads up to the high-level
-// voice, session and history listings — so the handlers stay free of I/O and
-// there is a single seam for tests to stub.
+// session, history and directory listings — so the other components stay free
+// of I/O and there is a single seam for tests to stub.
 type FS struct {
-	home        string
-	piperBin    string
-	piperVoices string
-	piperModel  string
+	home string
 }
 
-// NewFS returns an FS backed by the real operating-system filesystem, resolving
-// the paths it needs from cfg.
-func NewFS(cfg Config) *FS {
-	return &FS{
-		home:        home(),
-		piperBin:    cfg.PiperBin,
-		piperVoices: cfg.PiperVoices,
-		piperModel:  cfg.PiperModel,
-	}
+// NewFS returns an FS backed by the real operating-system filesystem.
+func NewFS() *FS {
+	return &FS{home: home()}
 }
 
 // Exists reports whether path can be stat'd.
@@ -56,42 +47,6 @@ func (*FS) TempDir(pattern string) (string, error) { return os.MkdirTemp("", pat
 
 // RemoveAll removes path and any children it contains.
 func (*FS) RemoveAll(path string) error { return os.RemoveAll(path) }
-
-// PiperEnabled reports whether the piper binary is present.
-func (f *FS) PiperEnabled() bool { return f.Exists(f.piperBin) }
-
-// ListVoices returns the names of the .onnx voices available to piper, sorted.
-func (f *FS) ListVoices() []string {
-	entries, err := f.ReadDir(f.piperVoices)
-	if err != nil {
-		return []string{}
-	}
-	out := []string{}
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".onnx") {
-			out = append(out, strings.TrimSuffix(e.Name(), ".onnx"))
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// ResolveVoice picks the piper voice model file to use: the named voice if it
-// exists, else the explicit configured model, else the first available voice.
-func (f *FS) ResolveVoice(name string) string {
-	if name != "" {
-		if p := filepath.Join(f.piperVoices, name+".onnx"); f.Exists(p) {
-			return p
-		}
-	}
-	if f.piperModel != "" && f.Exists(f.piperModel) {
-		return f.piperModel
-	}
-	for _, v := range f.ListVoices() {
-		return filepath.Join(f.piperVoices, v+".onnx")
-	}
-	return ""
-}
 
 // ListDir returns the sorted subdirectories of dir plus its parent.
 func (f *FS) ListDir(dir string) (models.DirListing, error) {
