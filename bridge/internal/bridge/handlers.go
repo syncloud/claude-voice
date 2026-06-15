@@ -28,11 +28,6 @@ var working = []string{
 
 const narrateSystem = `IMPORTANT OUTPUT RULE: Whenever your reply contains any code, you MUST end your message with a line containing exactly ===SPOKEN=== followed by a spoken narration of your entire reply for a developer who cannot see the screen. In the narration, read all code in full natural-language detail: name every declaration, identifier, type, parameter, and return, and describe the control flow and logic; phrase symbols naturally and never read punctuation literally. If your reply contains no code, do NOT add the marker or narration.`
 
-const narratePrompt = `You turn an AI coding assistant's reply into spoken narration for an experienced developer who knows this codebase but cannot see the screen (for example a blind developer pair-programming with AI). Speak the prose naturally. For any code, narrate it completely and precisely — every declaration, identifier, type, parameter, return value, and the control flow and key logic — the way a developer dictates code to a peer, so no detail is lost. Do not spell out punctuation or read symbols literally; phrase them naturally (for example: "assigns", "returns a list of strings", "for each item", "if x is greater than zero", "an arrow function taking req and res"). Use the real identifiers. Announce structure briefly ("function fetchUser, taking an id of type string, returns a User"). Keep it flowing and listenable, preserve order, and output only the narration with no preamble.
-
-Reply to narrate:
-`
-
 type agent struct {
 	dir     string
 	session string
@@ -473,34 +468,6 @@ func (h *Handlers) AgentByID(w http.ResponseWriter, r *http.Request) {
 	delete(h.agents, id)
 	h.mu.Unlock()
 	writeJSON(w, 200, h.agentList())
-}
-
-func (h *Handlers) narrate(text string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(h.cfg.Timeout)*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "claude", "-p", "--model", h.cfg.NarrateModel,
-		"--permission-mode", h.cfg.Perm, narratePrompt+text)
-	out, err := cmd.Output()
-	return strings.TrimSpace(string(out)), err
-}
-
-func (h *Handlers) Narrate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeText(w, 405, "method not allowed")
-		return
-	}
-	var p narrateReq
-	json.NewDecoder(r.Body).Decode(&p)
-	if strings.TrimSpace(p.Text) == "" {
-		writeText(w, 400, "empty text")
-		return
-	}
-	n, err := h.narrate(p.Text)
-	if err != nil || n == "" {
-		writeText(w, 500, "narrate failed")
-		return
-	}
-	writeText(w, 200, n)
 }
 
 func (h *Handlers) Stt(w http.ResponseWriter, r *http.Request) {

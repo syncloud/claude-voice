@@ -23,8 +23,7 @@ type Config struct {
 	PiperVoices string
 	PiperModel  string
 
-	NarrateModel string
-	NarrateOn    bool
+	NarrateOn bool
 
 	WorkDir string
 }
@@ -47,8 +46,7 @@ func DefaultConfig() Config {
 		PiperVoices: env("PIPER_VOICES", expand("~/piper-voices")),
 		PiperModel:  env("PIPER_MODEL", ""),
 
-		NarrateModel: env("NARRATE_MODEL", "haiku"),
-		NarrateOn:    env("VOICE_NARRATE", "1") != "0",
+		NarrateOn: env("VOICE_NARRATE", "1") != "0",
 
 		WorkDir: env("VOICE_WORKDIR", ""),
 	}

@@ -27,7 +27,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/chat", s.h.Chat)
 	mux.HandleFunc("/tts", s.h.Tts)
 	mux.HandleFunc("/voices", s.h.Voices)
-	mux.HandleFunc("/narrate", s.h.Narrate)
 	return mux
 }
 

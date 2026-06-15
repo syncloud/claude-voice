@@ -120,10 +120,6 @@ type ttsReq struct {
 	Voice string `json:"voice"`
 }
 
-type narrateReq struct {
-	Text string `json:"text"`
-}
-
 type chatReq struct {
 	Text    string `json:"text"`
 	Agent   *int   `json:"agent"`
