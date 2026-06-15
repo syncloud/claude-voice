@@ -11,9 +11,7 @@ local build() = {
             name: "bridge",
             image: "golang:1.23-bookworm",
             commands: [
-                "cd bridge",
-                "go vet ./...",
-                "CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -ldflags=\"-s -w\" -o ../claude-voice-bridge-arm64 ./cmd/claude-voice-bridge"
+                "./bridge/build.sh"
             ]
         },
         {
@@ -27,11 +25,7 @@ local build() = {
                 ANDROID_KEY_PASSWORD: { from_secret: "ANDROID_KEY_PASSWORD" },
             },
             commands: [
-                "yes | sdkmanager --licenses > /dev/null 2>&1 || true",
-                "sdkmanager 'platform-tools' 'platforms;android-34' 'build-tools;34.0.0'",
-                "cd android",
-                "./gradlew clean test assemble",
-                "cp app/build/outputs/apk/release/*.apk ../"
+                "./android/build.sh"
             ]
         },
         {
