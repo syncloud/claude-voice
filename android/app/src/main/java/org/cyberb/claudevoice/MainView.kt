@@ -11,7 +11,7 @@ import android.view.View
 import android.widget.RelativeLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.core.content.ContextCompat
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import kotlinx.coroutines.Dispatchers
@@ -99,7 +99,7 @@ class MainView(private val host: VoiceHost, root: View) {
             activity.getString(R.string.action_compact),
             activity.getString(R.string.action_model, modelLabel()),
         )
-        AlertDialog.Builder(activity)
+        MaterialAlertDialogBuilder(activity)
             .setTitle(R.string.actions_title)
             .setItems(items) { _, which ->
                 when (which) {
@@ -116,7 +116,7 @@ class MainView(private val host: VoiceHost, root: View) {
         val id = host.currentAgentId ?: return
         val labels = MODELS.map { it.label }.toTypedArray()
         val checked = MODELS.indexOfFirst { it.value == model(id) }.coerceAtLeast(0)
-        AlertDialog.Builder(activity)
+        MaterialAlertDialogBuilder(activity)
             .setTitle(R.string.model_title)
             .setSingleChoiceItems(labels, checked) { dlg, which ->
                 prefs().edit().putString("model_$id", MODELS[which].value).apply()
