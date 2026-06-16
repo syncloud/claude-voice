@@ -6,6 +6,7 @@ keystore.properties
 build
 *.iml
 *.apk
+*.aab
 *.keystore
 __pycache__/
 *.pyc

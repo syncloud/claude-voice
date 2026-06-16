@@ -35,7 +35,6 @@ local build() = {
                 api_key: { from_secret: "github_token" },
                 files: [ "claude-voice-*.apk", "claude-voice-bridge-arm64" ],
                 title: "${DRONE_TAG}",
-                note: "RELEASE_NOTES.md",
                 overwrite: true,
                 file_exists: "overwrite"
             },
@@ -53,7 +52,7 @@ local build() = {
                 timeout: "2m",
                 command_timeout: "2m",
                 target: "/home/artifact/repo/claude-voice/${DRONE_BUILD_NUMBER}",
-                source: [ "claude-voice-*.apk", "claude-voice-bridge-arm64" ],
+                source: [ "claude-voice-*.apk", "claude-voice-*.aab", "claude-voice-bridge-arm64" ],
                 strip_components: 0
             },
             when: {
