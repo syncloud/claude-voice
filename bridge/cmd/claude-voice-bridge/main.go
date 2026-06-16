@@ -29,6 +29,7 @@ func main() {
 	f.StringVar(&cfg.Model, "whisper-model", cfg.Model, "whisper model path")
 	f.StringVar(&cfg.WorkDir, "workdir", cfg.WorkDir, "starting agent directory (default: home)")
 	f.BoolVar(&cfg.NarrateOn, "narrate", cfg.NarrateOn, "narration on by default")
+	f.IntVar(&cfg.CompactAt, "compact-at", cfg.CompactAt, "auto-compact when context reaches this percent (0 disables)")
 	f.StringVar(&cfg.PiperBin, "piper-bin", cfg.PiperBin, "piper binary path")
 	f.StringVar(&cfg.PiperLib, "piper-lib", cfg.PiperLib, "piper LD_LIBRARY_PATH dir")
 	f.StringVar(&cfg.PiperEspeak, "piper-espeak", cfg.PiperEspeak, "piper espeak-ng-data dir")

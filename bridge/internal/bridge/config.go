@@ -24,6 +24,7 @@ type Config struct {
 	PiperModel  string
 
 	NarrateOn bool
+	CompactAt int
 
 	WorkDir string
 }
@@ -47,6 +48,7 @@ func DefaultConfig() Config {
 		PiperModel:  env("PIPER_MODEL", ""),
 
 		NarrateOn: env("VOICE_NARRATE", "1") != "0",
+		CompactAt: envInt("VOICE_COMPACT_AT", 80),
 
 		WorkDir: env("VOICE_WORKDIR", ""),
 	}

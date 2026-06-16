@@ -121,6 +121,7 @@ func (c *Claude) Chat(p model.ChatReq, emit func(model.Event)) {
 	sawReply := false
 	sentModel := false
 	newSession := ""
+	lastIn, lastMax := 0, 0
 	lines := make(chan []byte, 64)
 	go func() {
 		defer close(lines)
@@ -162,6 +163,9 @@ func (c *Claude) Chat(p model.ChatReq, emit func(model.Event)) {
 				if e.T == "reply" {
 					sawReply = true
 				}
+				if e.T == "usage" && e.In != nil && e.Max != nil {
+					lastIn, lastMax = *e.In, *e.Max
+				}
 				emit(e)
 			}
 		case <-heartbeat.C:
@@ -177,5 +181,11 @@ func (c *Claude) Chat(p model.ChatReq, emit func(model.Event)) {
 	}
 	if newSession != "" {
 		c.agents.SetSession(id, newSession)
+	}
+	if c.cfg.CompactAt > 0 && lastMax > 0 && lastIn*100 >= c.cfg.CompactAt*lastMax {
+		emit(model.Event{T: "working", Text: "Context is getting large — compacting to keep things fast."})
+		if _, ok := c.Compact(id); ok {
+			emit(model.Event{T: "usage", In: intp(0), Out: intp(0), Max: intp(lastMax)})
+		}
 	}
 }
