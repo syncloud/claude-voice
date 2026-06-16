@@ -1,4 +1,4 @@
-package org.cyberb.claudevoice
+package org.syncloud.claudevoice
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -383,7 +383,7 @@ class VoiceService : Service(), TextToSpeech.OnInitListener {
     private fun broadcast(type: String, text: String) {
         try {
             sendBroadcast(
-                Intent("org.cyberb.claudevoice.EVENT").setPackage(packageName)
+                Intent("org.syncloud.claudevoice.EVENT").setPackage(packageName)
                     .putExtra("type", type).putExtra("text", text)
             )
         } catch (e: Exception) { }

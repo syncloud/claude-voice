@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cyberb/claude-voice/bridge/internal/bridge/model"
+	"github.com/syncloud/claude-voice/bridge/internal/bridge/model"
 )
 
 // FS is the bridge's gateway to the local filesystem. It owns every disk

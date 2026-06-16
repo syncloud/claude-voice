@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/cyberb/claude-voice/bridge/internal/bridge"
 	"github.com/spf13/cobra"
+	"github.com/syncloud/claude-voice/bridge/internal/bridge"
 )
 
 func main() {

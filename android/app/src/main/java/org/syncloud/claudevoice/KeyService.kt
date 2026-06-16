@@ -1,4 +1,4 @@
-package org.cyberb.claudevoice
+package org.syncloud.claudevoice
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent

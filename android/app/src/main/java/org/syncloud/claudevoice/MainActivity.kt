@@ -1,4 +1,4 @@
-package org.cyberb.claudevoice
+package org.syncloud.claudevoice
 
 import android.Manifest
 import android.content.BroadcastReceiver
@@ -77,7 +77,7 @@ class MainActivity : AppCompatActivity(), VoiceHost {
         val root = findViewById<View>(R.id.drawer)
         drawerView = AgentDrawer(this, root)
         mainView = MainView(this, root)
-        ContextCompat.registerReceiver(this, eventReceiver, IntentFilter("org.cyberb.claudevoice.EVENT"), ContextCompat.RECEIVER_NOT_EXPORTED)
+        ContextCompat.registerReceiver(this, eventReceiver, IntentFilter("org.syncloud.claudevoice.EVENT"), ContextCompat.RECEIVER_NOT_EXPORTED)
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
         drawerView.refresh()
     }

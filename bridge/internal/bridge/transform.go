@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cyberb/claude-voice/bridge/internal/bridge/model"
+	"github.com/syncloud/claude-voice/bridge/internal/bridge/model"
 )
 
 const narrateMarker = "===SPOKEN==="

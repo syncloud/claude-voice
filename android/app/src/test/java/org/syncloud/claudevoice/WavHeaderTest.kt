@@ -1,4 +1,4 @@
-package org.cyberb.claudevoice
+package org.syncloud.claudevoice
 
 import org.junit.Assert.assertEquals
 import org.junit.Test

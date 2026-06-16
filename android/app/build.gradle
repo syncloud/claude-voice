@@ -3,7 +3,7 @@ apply plugin: 'kotlin-android'
 apply plugin: 'org.jetbrains.kotlin.plugin.serialization'
 
 android {
-    namespace "org.cyberb.claudevoice"
+    namespace "org.syncloud.claudevoice"
     compileSdk 34
 
     compileOptions {
@@ -16,7 +16,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "org.cyberb.claudevoice"
+        applicationId "org.syncloud.claudevoice"
         minSdkVersion 23
         targetSdkVersion 34
         versionCode 1

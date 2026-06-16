@@ -1,4 +1,4 @@
-module github.com/cyberb/claude-voice/bridge
+module github.com/syncloud/claude-voice/bridge
 
 go 1.21
 

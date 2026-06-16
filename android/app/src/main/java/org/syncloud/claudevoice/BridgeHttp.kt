@@ -1,4 +1,4 @@
-package org.cyberb.claudevoice
+package org.syncloud.claudevoice
 
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers

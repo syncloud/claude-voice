@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cyberb/claude-voice/bridge/internal/bridge/model"
+	"github.com/syncloud/claude-voice/bridge/internal/bridge/model"
 )
 
 var working = []string{

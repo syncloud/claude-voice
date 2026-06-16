@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cyberb/claude-voice/bridge/internal/bridge/model"
+	"github.com/syncloud/claude-voice/bridge/internal/bridge/model"
 )
 
 // Server adapts the bridge's components to HTTP routes. All knowledge of

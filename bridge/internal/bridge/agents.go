@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cyberb/claude-voice/bridge/internal/bridge/model"
+	"github.com/syncloud/claude-voice/bridge/internal/bridge/model"
 )
 
 type agent struct {
