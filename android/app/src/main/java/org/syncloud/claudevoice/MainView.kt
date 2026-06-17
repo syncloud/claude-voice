@@ -368,6 +368,8 @@ class MainView(private val host: VoiceHost, root: View) {
 
     fun setStatus(s: String) { statusWord = s; updateStatusLine() }
 
+    fun bridgeUp() { if (statusWord.startsWith("no bridge")) setStatus("ready") }
+
     private fun updateStatusLine() {
         val sb = StringBuilder(statusWord)
         if (statusWord == "thinking…" || statusWord == "compacting…") {

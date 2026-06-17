@@ -67,6 +67,7 @@ class AgentDrawer(private val host: VoiceHost, root: View) {
         val ok = http.health()
         setServerUp(ok)
         if (!ok) return@launch
+        host.mainView.bridgeUp()
         val list = http.agents() ?: return@launch
         val sig = list.joinToString("|") { "${it.id}:${it.branch}:${it.dirty}:${it.exists}" }
         if (sig != agentsSig) {
